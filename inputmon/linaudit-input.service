@@ -1,0 +1,20 @@
+[Unit]
+Description=Input-source attribution logger (LinAudit)
+Documentation=file:%h/.local/share/linaudit/README.md
+After=systemd-udevd.service linaudit-store.service
+Requires=linaudit-store.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/linaudit input
+Restart=always
+RestartSec=2
+Nice=5
+NoNewPrivileges=yes
+ProtectHome=read-only
+ProtectSystem=full
+# writes into the encrypted mount /var/log/linaudit (full leaves /var writable);
+# must keep access to /dev/input -> do NOT set PrivateDevices/DevicePolicy.
+
+[Install]
+WantedBy=multi-user.target

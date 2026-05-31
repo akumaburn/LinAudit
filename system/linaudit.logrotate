@@ -1,0 +1,25 @@
+# LinAudit log rotation: daily, keep 14 days, compress. copytruncate so the
+# running linaudit-input service (which holds keys.log open) needs no restart.
+
+/var/log/linaudit/input/keys.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0600 root root
+}
+
+/var/log/linaudit/shell/commands.log /var/log/linaudit/shell/buffer.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su __LINAUDIT_USER__ __LINAUDIT_USER__
+    create 0600 __LINAUDIT_USER__ __LINAUDIT_USER__
+}

@@ -1,0 +1,5 @@
+# LinAudit: log USB and input device add/remove to the journal (tags: linaudit-usb, linaudit-input)
+# Catches BadUSB-style rogue devices enumerating, and any new input device appearing.
+ACTION=="add",    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", RUN+="/usr/bin/logger -t linaudit-usb USB add vid=$attr{idVendor} pid=$attr{idProduct} mfr=$attr{manufacturer} prod=$attr{product} serial=$attr{serial}"
+ACTION=="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", RUN+="/usr/bin/logger -t linaudit-usb USB remove $kernel"
+ACTION=="add",    SUBSYSTEM=="input", KERNEL=="event*", RUN+="/usr/bin/logger -t linaudit-input input add $devnode"

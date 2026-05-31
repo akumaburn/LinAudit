@@ -1,0 +1,19 @@
+[Unit]
+Description=Unlock + mount encrypted audit log store (TPM-sealed)
+Documentation=file:/home/aeslampanah/.local/share/linaudit/README.md
+After=systemd-udevd.service local-fs.target
+Before=linaudit-input.service linaudit-web.service
+ConditionPathExists=/var/lib/linaudit/store.img
+
+[Service]
+# Optional: the installer writes LINAUDIT_USER here so `store up` can chown the
+# shell log dir to the monitored account (the binary also auto-detects it).
+EnvironmentFile=-/etc/linaudit/linaudit.env
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/linaudit store up
+ExecStop=/usr/local/bin/linaudit store down
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

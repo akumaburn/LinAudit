@@ -1,0 +1,41 @@
+# --- Secrets & runtime state: NEVER commit ---
+# TPM-sealed LUKS key, password hash, encrypted container
+*.cred
+auth.json
+store.img
+*.key
+*.luks
+
+# Captured logs (contain keystrokes / commands / prompt text)
+*.log
+keys.log
+buffer.log
+commands.log
+disabled
+
+# Session/cookie scratch
+*.cookies
+
+# Go build artifacts (the binary is built from source; never commit binaries)
+/linaudit
+/inject
+/dist/
+*.test
+*.out
+
+# Stray Python bytecode from dev/verification tooling (the project itself is Go)
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# GeoIP country DB (fetch via data/fetch-geoip.sh; CC BY 4.0, ~23MB, not vendored)
+geoip/
+ipv4.csv
+ipv6.csv

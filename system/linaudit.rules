@@ -1,0 +1,9 @@
+## LinAudit auditd rules (loaded via augenrules)
+
+## Every command execution, system-wide (key: cmd_exec)
+-a always,exit -F arch=b64 -S execve -S execveat -k cmd_exec
+-a always,exit -F arch=b32 -S execve -S execveat -k cmd_exec
+
+## Software keystroke-injection signature: any open/read/write of /dev/uinput.
+## On a stock GNOME desktop almost nothing touches uinput, so hits here are notable.
+-w /dev/uinput -p rwa -k uinput_inject

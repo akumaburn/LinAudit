@@ -1,0 +1,22 @@
+[Unit]
+Description=LinAudit web dashboard (localhost:8799)
+Documentation=file:/home/aeslampanah/.local/share/linaudit/README.md
+After=network.target linaudit-store.service
+Requires=linaudit-store.service
+
+[Service]
+# Optional: the installer writes LINAUDIT_USER here so the root service resolves
+# the monitored account deterministically (the binary also auto-detects it).
+EnvironmentFile=-/etc/linaudit/linaudit.env
+Type=simple
+ExecStart=/usr/local/bin/linaudit web
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+# Runs as root: reads /var/log/linaudit/input/keys.log and drives systemctl/auditctl.
+# Bound to 127.0.0.1 with per-start token auth (see server.py header).
+
+[Install]
+WantedBy=multi-user.target

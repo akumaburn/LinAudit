@@ -1,0 +1,8 @@
+{
+  "RestoreOnStartup": 4,
+  "RestoreOnStartupURLs": ["http://127.0.0.1:8799/"],
+  "HomepageLocation": "http://127.0.0.1:8799/",
+  "HomepageIsNewTabPage": false,
+  "ShowHomeButton": true,
+  "NewTabPageLocation": "http://127.0.0.1:8799/"
+}
