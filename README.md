@@ -1,11 +1,17 @@
 # LinAudit
 
-A local host-monitoring and input-forensics stack for Linux (built and tested on
-Manjaro/Arch, GNOME/Wayland, zsh). It was born from a concrete question -- "why
-do commands I never typed sometimes appear in my terminal?" -- and grew into a
-small, self-contained system that records what happens at the input, shell, and
-process layers, encrypts the evidence at rest, and presents it in a
-password-protected local dashboard.
+A local host-monitoring and input-forensics stack for Linux, shipped as one static
+Go binary that runs on any popular systemd distro (built and tested on Manjaro/Arch,
+GNOME/Wayland, zsh). It was born from a concrete question -- "why do commands I never
+typed sometimes appear in my terminal?" -- and grew into a small, self-contained
+system that records what happens at the input, shell, and process layers, encrypts
+the evidence at rest, and presents it in a password-protected local dashboard.
+
+<p align="center">
+  <img src="screenshot.png" width="900"
+       alt="LinAudit Overview dashboard: the monitor-health rail (zsh / input / audit), the encrypted-store badge, live keystroke/buffer/connection counts, global rx/tx throughput, and an offline GeoIP world map of current connections">
+</p>
+<p align="center"><sub>Overview &mdash; monitor health (zsh / input / audit), encrypted-store status, live throughput, and the offline GeoIP map of current connections.</sub></p>
 
 > Status: complete and in use -- input/shell/exec monitoring, encrypted storage,
 > CLI, web dashboard, and the network panel (listening processes by bandwidth,
@@ -15,6 +21,31 @@ password-protected local dashboard.
 > shared-library dependency at runtime; the dashboard markup and world map are
 > embedded via `go:embed`. The only non-Go runtime piece is the zsh hook (it must
 > run inside the shell). The sole optional external tool is `nvidia-smi` (GPU VRAM).
+
+## Highlights
+
+- **Three correlated planes** -- prompt text (even unexecuted), per-keystroke source
+  device, and auditd execve / uinput / USB -- so you can tell *typed* from *pasted*
+  from *injected* after the fact.
+- **Encrypted at rest** -- a LUKS2 log store whose key is sealed to the TPM via
+  `systemd-creds`; the writers refuse to start unless it is mounted.
+- **Local web dashboard** on `127.0.0.1:8799` -- scrypt login, per-load CSRF token,
+  Host allowlist + Origin / Sec-Fetch checks; Overview / Network / Processes / Logs /
+  Timeline.
+- **Network panel** -- per-process bandwidth read from the kernel over netlink (no
+  `ss` / iproute2 dependency), reverse DNS, and an offline GeoIP world-map choropleth.
+- **One static Go binary** -- pure standard library, no interpreter or shared
+  libraries, assets embedded via `go:embed`; builds for amd64 / arm64 / arm / 386.
+
+## Quick start
+
+```
+make build              # -> ./linaudit  (static, no runtime deps)
+sudo sh install.sh      # detect user, install, init store, enable services, run doctor
+linaudit doctor         # readiness check you can run on any distro
+```
+
+Then open <http://127.0.0.1:8799/> -- the first visit sets the dashboard password.
 
 ## Why it exists
 
