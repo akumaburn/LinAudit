@@ -97,9 +97,14 @@ never written to disk in plaintext.
   monitor is off / storage is plaintext, filter/search, sortable tables (including
   by process and a descending-time "age" column), new-connection/-country
   highlighting, scroll + text-selection preservation across refreshes, keyboard
-  shortcuts (1-5 sections, / filter, p pause, r refresh), per-tab log views
-  (newest first), correlated timeline, offline world-map choropleth, enable/disable
-  each layer, logout.
+  shortcuts (1-5 sections, / filter, l LAN, w wired, p pause, r refresh), per-tab
+  log views (newest first), correlated timeline, offline world-map choropleth,
+  enable/disable each layer, logout.
+- Noise filters (default ON, toggle-able): the dashboard hides routine local/LAN
+  connections and wired-bus (USB/PS-2) keystrokes by default, so the network and
+  input views surface only remote peers and non-wired (wireless / virtual /
+  injected) input -- the forensically interesting traffic. Each filter has a
+  one-click toggle (and an `l` / `w` shortcut) and shows how many rows are hidden.
 - Processes view: per-process CPU%, resident memory, and NVIDIA GPU VRAM (via
   nvidia-smi, capturing both graphics and compute procs), plus a system CPU / RAM /
   GPU summary; sortable by any column and filterable.
@@ -116,7 +121,9 @@ The dashboard's network section answers "what is my machine talking to":
   over netlink, sampled every 2s), with its listening ports.
 - Remote connections -- each established peer with reverse-DNS hostname and GeoIP
   country flag. LAN/private/CGNAT/multicast peers are classified locally and
-  excluded from rDNS, GeoIP, and the map.
+  excluded from rDNS, GeoIP, and the map; they are also hidden from the
+  connection list, country bars, and counts by default (a "show LAN" toggle and
+  the `l` key bring them back for a full local + remote view).
 - World map -- an offline choropleth highlighting the countries of current
   connections.
 

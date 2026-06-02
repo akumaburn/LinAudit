@@ -12,10 +12,16 @@
 // Log: /var/log/linaudit/input/keys.log  (root only, 0600)
 // Format (tab separated, %.6f timestamps, single-quoted names):
 //
-//	<ts>  KEY            <devpath>  '<name>'  <KEYNAME>  <0=up|1=down|2=repeat>
+//	<ts>  KEY            <devpath>  '<name>'  <KEYNAME>  <0=up|1=down|2=repeat>  <bus>
 //	<ts>  DEVICE_ADDED   <devpath>  '<name>'  phys='<phys>'  key-capable|non-key
 //	<ts>  DEVICE_REMOVED <devpath>  '<name>'
 //	<ts>  AUDIT_START    pid=<pid>  devices=<N>
+//
+// <bus> is the device's physical attachment classified from EVIOCGPHYS at open
+// time -- one of wired (USB/PS-2), wireless (Bluetooth), virtual (uinput / no
+// topology), or other. It is a trailing field, so the historical six-field KEY
+// records (and every parser that reads fields 0..5) remain valid. The dashboard
+// uses it to optionally hide trusted wired-keyboard noise.
 package inputmon
 
 import (
@@ -46,6 +52,7 @@ type device struct {
 	path    string
 	name    string
 	keyCap  bool
+	kind    string // physical bus classified from phys (see bus.go)
 	fd      int
 	devFile *os.File
 }
@@ -147,6 +154,7 @@ func (m *monitor) openDevice(path string) {
 		path:    path,
 		name:    name,
 		keyCap:  keyCap,
+		kind:    busKind(phys),
 		fd:      fd,
 		devFile: f,
 	}
@@ -204,6 +212,7 @@ func (m *monitor) reader(dev *device) {
 				reprSingle(dev.name),
 				keyname(ev.Code),
 				strconv.Itoa(int(ev.Value)),
+				dev.kind,
 			)
 		}
 		// A zero-length read with no error indicates EOF; treat as removal.

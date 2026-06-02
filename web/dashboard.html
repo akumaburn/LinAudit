@@ -583,8 +583,8 @@
         </div>
         <div class="panel">
           <div class="bar"><span class="title">remote connections</span>
-            <span class="meta">reverse-DNS + country &middot; LAN excluded from the map</span>
-            <span class="right"><input class="filter" id="connFilter" type="text" placeholder="filter connections (/)" autocomplete="off"></span></div>
+            <span class="meta">reverse-DNS + country &middot; local/LAN hidden by default</span>
+            <span class="right"><button class="btn sm" id="lanToggle" title="show/hide local, LAN, and private connections (l)">show LAN</button><input class="filter" id="connFilter" type="text" placeholder="filter connections (/)" autocomplete="off"></span></div>
           <div class="scroll mid" id="netconns"><div class="loading"><span class="spin"></span>loading&hellip;</div></div>
         </div>
       </section>
@@ -619,6 +619,7 @@
             <span class="tab" data-log="devices">devices</span>
             <span class="tab" data-log="usb">usb/journal</span>
             <span class="right">
+              <button class="btn sm" id="wiredToggle" title="show/hide wired-bus (USB/PS-2) keystrokes (w)" style="display:none">show wired</button>
               <input class="filter" id="logFilter" type="text" placeholder="filter (/)" autocomplete="off">
               newest first &middot; lines
               <select id="lines"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select>
@@ -636,6 +637,7 @@
         <div class="panel">
           <div class="bar"><span class="title">correlated timeline</span>
             <span class="right">
+              <button class="btn sm" id="wiredToggleTl" title="show/hide wired-bus (USB/PS-2) keystrokes (w)">show wired</button>
               <input class="filter" id="tlFilter" type="text" placeholder="filter (/)" autocomplete="off">
               last <select id="repn"><option>15</option><option selected>25</option><option>60</option></select>
               <span class="btn" id="reprun">run</span></span></div>
@@ -655,6 +657,8 @@
     <h3>Keyboard shortcuts</h3>
     <div class="helprow"><span>Overview / Network / Processes / Logs / Timeline</span><span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></span></div>
     <div class="helprow"><span>Focus filter / search</span><kbd>/</kbd></div>
+    <div class="helprow"><span>Show / hide LAN connections</span><kbd>l</kbd></div>
+    <div class="helprow"><span>Show / hide wired keystrokes</span><kbd>w</kbd></div>
     <div class="helprow"><span>Pause / resume auto-refresh</span><span><kbd>p</kbd> <kbd>space</kbd></span></div>
     <div class="helprow"><span>Refresh now</span><kbd>r</kbd></div>
     <div class="helprow"><span>Toggle this help</span><kbd>?</kbd></div>
@@ -672,6 +676,11 @@ let curLog=localStorage.getItem('au_log')||"buffer";
 let auto = JSON.parse(localStorage.getItem('au_auto') ?? 'true');
 let ivl  = parseInt(localStorage.getItem('au_ivl') ?? '3');
 let curView=localStorage.getItem('au_view')||"overview";   // remembered section (extra, additive key)
+/* noise filters -- both default to HIDDEN: local/LAN connections and wired-bus
+   (USB/PS-2) keystrokes are routine, so the default view surfaces only remote
+   peers and non-wired (wireless/virtual/injected) input. Toggle-able + persisted. */
+let showLan   = JSON.parse(localStorage.getItem('au_show_lan')   ?? 'false');
+let showWired = JSON.parse(localStorage.getItem('au_show_wired') ?? 'false');
 let timer=null;
 
 /* ---- complete HTML escaper: & < > " ' ---- */
@@ -686,6 +695,44 @@ const fmtCount=n=>n>=1000?(n/1000).toFixed(n>=10000?0:1)+'k':String(n);
 /* ---- shared bandwidth formatter (returns {v,u} for split styling) ---- */
 function bpsParts(n){ if(!n||n<1)return {v:'0',u:'B/s'}; const u=['B/s','KB/s','MB/s','GB/s']; let i=0; let x=n; while(x>=1024&&i<3){x/=1024;i++;} return {v:(x<10&&i?x.toFixed(1):String(Math.round(x))),u:u[i]}; }
 function bps(n){ const p=bpsParts(n); return p.v+' '+p.u; }
+
+/* =====================================================================
+   NOISE-FILTER TOGGLES  (LAN connections + wired-bus keystrokes)
+   Both default to HIDDEN; state is persisted and re-renders from cache.
+   ===================================================================== */
+/* small source badge for a KEY event's bus. "wired" is the unremarkable default
+   and is intentionally left unbadged to keep the dense keystroke stream legible;
+   wireless / virtual / other are flagged because they are the forensic signal. */
+function kindBadge(kind){
+  if(!kind || kind==='wired') return '';
+  const m={wireless:['e','bt'],virtual:['d','virtual'],other:['k','?']}[kind]||['k',esc(kind)];
+  return `<span class="badge ${m[0]}" title="input source: ${esc(kind)}">${m[1]}</span> `;
+}
+/* a one-row "N hidden" affordance prepended to a wired-filtered table body */
+function wiredHint(n,cols){
+  if(showWired || !n) return '';
+  return `<tr><td colspan="${cols}"><div class="empty" style="padding:9px 4px">`+
+    `<a href="#" onclick="setShowWired(true);return false">show ${n} hidden wired-bus keystroke${n===1?'':'s'}</a></div></td></tr>`;
+}
+function setShowLan(v){
+  showLan=v; localStorage.setItem('au_show_lan',JSON.stringify(v)); syncToggleLabels();
+  if(lastNet) paintLanSections(lastNet.countries||{}, lastNet.connections||[], lastNet.private_count||0, new Set(), new Set());
+}
+function setShowWired(v){
+  showWired=v; localStorage.setItem('au_show_wired',JSON.stringify(v)); syncToggleLabels();
+  loadLog(); renderReport();
+}
+/* keep both toggle buttons' labels/state in sync with the flags (and the LAN
+   count, refreshed on each /api/net frame) */
+function syncToggleLabels(){
+  const priv=lastNet?(lastNet.private_count||0):0;
+  const lt=$("#lanToggle");
+  if(lt){ lt.textContent = showLan ? 'hide LAN' : ('show LAN'+(priv?` (${priv})`:'')); lt.classList.toggle('go',showLan); }
+  const setW=el=>{ if(el){ el.textContent=showWired?'hide wired':'show wired'; el.classList.toggle('go',showWired); } };
+  setW($("#wiredToggle")); setW($("#wiredToggleTl"));
+}
+/* the wired toggle in the Logs bar only makes sense on the keystrokes tab */
+function syncWiredToggleVis(){ const b=$("#wiredToggle"); if(b) b.style.display=(curLog==='keys')?'':'none'; }
 
 /* =====================================================================
    STATE PRESERVATION HELPERS
@@ -839,12 +886,16 @@ function renderLog(which,lines){
   }else if(which==="keys"){
     cols=4;
     head=`<th class="ct">time</th><th class="cd">device</th><th>key</th><th>state</th>`;
+    let nHidden=0;
     body=rows.map(l=>{const f=l.split("\t");
-      if(f[1]==="KEY"&&f.length>=6)
-        return `<tr><td class="ct">${ftime(f[0],1)}</td><td class="cd">${esc(cleanName(f[3]))}</td><td class="key">${esc(f[4])}</td><td>${stateBadge(f[5])}</td></tr>`;
+      if(f[1]==="KEY"&&f.length>=6){
+        const kind=f[6]||"";                       // trailing bus field (absent on pre-upgrade lines)
+        if(!showWired && kind==="wired"){nHidden++;return "";}
+        return `<tr><td class="ct">${ftime(f[0],1)}</td><td class="cd">${kindBadge(kind)}${esc(cleanName(f[3]))}</td><td class="key">${esc(f[4])}</td><td>${stateBadge(f[5])}</td></tr>`;}
       if(f[1]==="DEVICE_ADDED"||f[1]==="DEVICE_REMOVED"||f[1]==="AUDIT_START")
         return `<tr><td class="ct">${ftime(f[0],1)}</td><td colspan="3"><span class="ev">${esc(f[1])}</span> ${esc(cleanName(f[3]||f[2]||""))}</td></tr>`;
       return rawRow(l,4);}).join("");
+    body=wiredHint(nHidden,cols)+body;
   }else if(which==="devices"){
     cols=3;
     head=`<th class="ct">time</th><th>event</th><th>device</th>`;
@@ -870,8 +921,12 @@ function reportRowsHTML(items){
   const fq=tlFilter.trim().toLowerCase();
   let list=items;
   if(fq) list=items.filter(it=>(String(it.tag)+" "+String(it.detail)).toLowerCase().includes(fq));
-  return list.map(it=>{const cls={BUF:"b",EXEC:"e",KEY:"k",DEV:"d"}[it.tag]||"";
-    return `<tr><td class="ct">${ftime(it.ts,1)}</td><td><span class="badge ${cls}">${esc(it.tag)}</span></td><td>${esc(it.detail)}</td></tr>`;}).join("");
+  let nHidden=0;
+  if(!showWired){ const n0=list.length; list=list.filter(it=>!(it.tag==="KEY"&&it.kind==="wired")); nHidden=n0-list.length; }
+  const rows=list.map(it=>{const cls={BUF:"b",EXEC:"e",KEY:"k",DEV:"d"}[it.tag]||"";
+    const src=it.tag==="KEY"?kindBadge(it.kind):"";
+    return `<tr><td class="ct">${ftime(it.ts,1)}</td><td><span class="badge ${cls}">${esc(it.tag)}</span></td><td>${src}${esc(it.detail)}</td></tr>`;}).join("");
+  return wiredHint(nHidden,3)+rows;
 }
 let lastReportItems=[];
 async function runReport(){
@@ -1101,7 +1156,7 @@ function renderCountryList(countries,priv,newCC){
     return `<div class="crow${isNew}"><span class="flag">${flag(cc)}</span><span class="cc">${esc(cc)}</span>`+
            `<span class="barwrap"><span class="bar" style="width:${w}%"></span></span><span class="n">${esc(String(n))}</span></div>`;
   }).join("");
-  if(priv>0){
+  if(showLan && priv>0){       // LAN aggregate is itself a "LAN indicator" -- only when shown
     const w=Math.max(6,Math.round(priv/Math.max(max,priv)*100));
     html+=`<div class="crow lan"><span class="flag">&#127968;</span><span class="cc">LAN</span>`+
           `<span class="barwrap"><span class="bar" style="width:${w}%"></span></span><span class="n">${esc(String(priv))}</span></div>`;
@@ -1151,16 +1206,16 @@ async function renderNet(){
   const geo=s.geoip_ready?'ready':'loading…', rdns=s.rdns_enabled?'on':'off';
   const metaStr=`${procs.length} procs · ${conns.length} conns · geoip ${geo} · rdns ${rdns}`;
 
-  // global totals strips (overview + network)
+  // global throughput totals (rx/tx + distinct countries -- NOT affected by the
+  // LAN filter, so set here once per fetch)
   const rxP=bpsParts(tot.rx), txP=bpsParts(tot.tx);
-  const setTot=(idr,idt,idc,idcc)=>{
+  const setThru=(idr,idt,idcc)=>{
     $(idr).innerHTML=rxP.v+'<span class="u">'+rxP.u+'</span>';
     $(idt).innerHTML=txP.v+'<span class="u">'+txP.u+'</span>';
-    $(idc).textContent=conns.length;
     $(idcc).textContent=ccCount;
   };
-  setTot("#tot-rx","#tot-tx","#tot-conns","#tot-cc");
-  setTot("#totN-rx","#totN-tx","#totN-conns","#totN-cc");
+  setThru("#tot-rx","#tot-tx","#tot-cc");
+  setThru("#totN-rx","#totN-tx","#totN-cc");
   $("#tot-rx-spark").innerHTML=miniSpark(gThru.rx,60,26,'#56d4dd');
   $("#tot-tx-spark").innerHTML=miniSpark(gThru.tx,60,26,'#d2a8ff');
   $("#totN-rx-spark").innerHTML=miniSpark(gThru.rx,60,26,'#56d4dd');
@@ -1168,28 +1223,47 @@ async function renderNet(){
   $("#thru-rx").textContent=bps(tot.rx); $("#thru-tx").textContent=bps(tot.tx);
   $("#thruN-rx").textContent=bps(tot.rx); $("#thruN-tx").textContent=bps(tot.tx);
 
-  // rail live count + sidebar badge
-  $("#c-conns").innerHTML=conns.length+'<span class="u">active</span>';
-  $("#nav-net").textContent=conns.length;
-
-  // overview + network duplicated meta/attribution/legend chips
-  $("#privchip").textContent='Local / Private: '+priv;
-  $("#privchip2").textContent='Local / Private: '+priv;
+  // meta / attribution / subtitle
   $("#netmeta").textContent=metaStr; $("#netmeta-o").textContent=metaStr;
   $("#netattr").textContent=s.attribution||''; $("#netattr-o").textContent=s.attribution||'';
   $("#netsub").textContent=`offline GeoIP choropleth · geoip ${geo} · rdns ${rdns}`;
 
-  // country bar lists (overview + network) -- numeric companion to the choropleth
-  const clHtml=renderCountryList(countries, priv, newCC);
-  safeRender($("#ovCountries"),clHtml);
-  safeRender($("#netCountries"),clHtml);
-
   renderProcTables(procs);
-  renderConnTable(conns,newPeers);
+
+  // LAN-filter-affected sections (connection rows + counts, country LAN bar, private chip)
+  paintLanSections(countries, conns, priv, newCC, newPeers);
 
   // commit "previous" snapshots AFTER rendering so highlights are based on the prior frame
   lastCountries=Object.assign({},countries);
   lastPeers=curPeers;
+}
+
+/* render every LAN-filter-affected section from a /api/net snapshot. Factored out
+   so the LAN toggle can re-render instantly from the cached payload (with empty
+   new-sets so nothing re-flashes) WITHOUT re-fetching or double-counting the
+   client-side throughput ring buffers. */
+function paintLanSections(countries, conns, priv, newCC, newPeers){
+  const shownConns = showLan ? conns : conns.filter(c=>c.scope!=='lan');
+  // connection counts reflect the active view (global-only by default)
+  $("#tot-conns").textContent=shownConns.length;
+  $("#totN-conns").textContent=shownConns.length;
+  $("#c-conns").innerHTML=shownConns.length+'<span class="u">active</span>';
+  $("#nav-net").textContent=shownConns.length;
+  // the private chip is itself a LAN indicator -> shown only when LAN is visible
+  setPrivChip(priv);
+  // country bar lists (LAN bar inside is gated on showLan within renderCountryList)
+  const clHtml=renderCountryList(countries, priv, newCC);
+  safeRender($("#ovCountries"),clHtml);
+  safeRender($("#netCountries"),clHtml);
+  // connection table (applies the LAN filter itself)
+  renderConnTable(conns, newPeers);
+  // refresh the "show LAN (N)" button label now that the private count is known
+  syncToggleLabels();
+}
+function setPrivChip(priv){
+  ['#privchip','#privchip2'].forEach(id=>{ const el=$(id); if(!el) return;
+    if(showLan){ el.style.display=''; el.textContent='Local / Private: '+priv; }
+    else { el.style.display='none'; } });
 }
 
 function renderProcTables(procs){
@@ -1220,11 +1294,13 @@ function renderProcTables(procs){
 }
 
 function renderConnTable(conns,newPeers){
+  const hiddenLan=showLan?0:conns.filter(c=>c.scope==='lan').length;   // local/LAN/private hidden by default
+  const base=showLan?conns:conns.filter(c=>c.scope!=='lan');
   const fq=connFilter.trim().toLowerCase();
-  let rows=conns;
-  if(fq) rows=conns.filter(c=>(String(c.proc||'')+' '+String(c.peer||'')+' '+String(c.host||'')+' '+String(c.country||'')).toLowerCase().includes(fq));
+  let rows=base;
+  if(fq) rows=base.filter(c=>(String(c.proc||'')+' '+String(c.peer||'')+' '+String(c.host||'')+' '+String(c.country||'')).toLowerCase().includes(fq));
   rows=sortRows(rows,'conn');
-  const maxBw=Math.max(1,...conns.map(bwOf));
+  const maxBw=Math.max(1,...rows.map(bwOf));        // scale bars to the shown rows
 
   const cn=rows.map(c=>{ const isg=c.scope==='global';
     const cc=isg?`<span class="flag">${flag(c.country)}</span> ${esc(c.country||'?')}`:'<span class="cd">LAN</span>';
@@ -1235,7 +1311,8 @@ function renderConnTable(conns,newPeers){
       bwCell(c.rx_bps,'rx',maxBw)+bwCell(c.tx_bps,'tx',maxBw)+`</tr>`; }).join('');
   const head=`<tr>${thSort('conn','name','process')}${thSort('conn','peer','peer')}${thSort('conn','host','reverse dns')}${thSort('conn','country','country')}${thSort('conn','seen','age')}${thSort('conn','rx','&#8595; rx')}${thSort('conn','tx','&#8593; tx')}</tr>`;
   const empty=fq?`<tr><td colspan="7"><div class="empty"><span class="eic">&#128269;</span>no connections match &ldquo;${esc(connFilter)}&rdquo;</div></td></tr>`
-                :`<tr><td colspan="7"><div class="empty"><span class="eic">&#127757;</span>(no active connections)</div></td></tr>`;
+               :(hiddenLan>0?`<tr><td colspan="7"><div class="empty"><span class="eic">&#127968;</span>${hiddenLan} local/LAN connection${hiddenLan===1?'':'s'} hidden &middot; <a href="#" onclick="setShowLan(true);return false">show LAN</a></div></td></tr>`
+                            :`<tr><td colspan="7"><div class="empty"><span class="eic">&#127757;</span>(no active connections)</div></td></tr>`);
   safeRender($("#netconns"),`<table><thead>${head}</thead><tbody>${cn||empty}</tbody></table>`);
 }
 
@@ -1331,11 +1408,16 @@ $("#collapse").onclick=()=>{ $("#app").classList.toggle("collapsed"); };
 /* ================= log tabs ================= */
 $$(".tab[data-log]").forEach(t=>t.onclick=()=>{
   $$(".tab[data-log]").forEach(x=>x.classList.remove("sel"));
-  t.classList.add("sel");curLog=t.dataset.log;localStorage.setItem('au_log',curLog);loadLog();});
+  t.classList.add("sel");curLog=t.dataset.log;localStorage.setItem('au_log',curLog);syncWiredToggleVis();loadLog();});
 $("#refresh").onclick=loadLog;
 $("#reprun").onclick=runReport;
 $("#logout").onclick=async()=>{try{await api("/api/logout",{method:"POST"});}catch(e){}location.href="/";};
 $("#lines").onchange=()=>{localStorage.setItem('au_lines',$("#lines").value);loadLog();};
+
+/* ================= noise-filter toggle buttons ================= */
+$("#lanToggle").onclick=()=>setShowLan(!showLan);
+$("#wiredToggle").onclick=()=>setShowWired(!showWired);
+$("#wiredToggleTl").onclick=()=>setShowWired(!showWired);
 
 /* ================= live filters (substring) ================= */
 $("#logFilter").oninput=e=>{logFilter=e.target.value;loadLog();};
@@ -1368,6 +1450,8 @@ document.addEventListener('keydown',e=>{
     case '4': setView('logs'); break;
     case '5': setView('timeline'); break;
     case '/': { const f=activeFilterEl(); if(f){ e.preventDefault(); f.focus(); f.select&&f.select(); } break; }
+    case 'l': setShowLan(!showLan); toast(showLan?"showing LAN connections":"LAN hidden"); break;
+    case 'w': setShowWired(!showWired); toast(showWired?"showing wired keystrokes":"wired keystrokes hidden"); break;
     case 'p': setAuto(!auto); break;
     case ' ': e.preventDefault(); setAuto(!auto); break;
     case 'r': tick(); toast("refreshed"); break;
@@ -1380,6 +1464,8 @@ document.addEventListener('keydown',e=>{
 function restoreUI(){
   const ln=localStorage.getItem('au_lines'); if(ln)$("#lines").value=ln;
   $$(".tab[data-log]").forEach(x=>x.classList.toggle("sel",x.dataset.log===curLog));
+  syncToggleLabels();          // reflect persisted show-LAN / show-wired state on the buttons
+  syncWiredToggleVis();        // the Logs wired toggle is keys-tab only
   setView(curView);
 }
 

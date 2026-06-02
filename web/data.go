@@ -271,18 +271,23 @@ func logview(which string, n int) []string {
 
 // ------------------------------- report ------------------------------------
 
-// reportItem is one correlated event for /api/report.
+// reportItem is one correlated event for /api/report. Kind carries the input
+// bus for KEY events (wired|wireless|virtual|other) and is empty for other
+// planes; the dashboard uses it to optionally hide wired-keyboard noise.
 type reportItem struct {
 	Ts     float64 `json:"ts"`
 	Tag    string  `json:"tag"`
 	Detail string  `json:"detail"`
+	Kind   string  `json:"kind,omitempty"`
 }
 
-// reportRow is the intermediate (ts, tag, detail) tuple used while merging.
+// reportRow is the intermediate (ts, tag, detail, kind) tuple used while
+// merging. kind is set only for KEY rows.
 type reportRow struct {
 	ts     float64
 	tag    string
 	detail string
+	kind   string
 }
 
 // report correlates the last n prompt buffer entries with exec and keystroke
@@ -293,7 +298,7 @@ func report(n int) []reportItem {
 		p := strings.Split(line, "\t")
 		if len(p) >= 6 && p[4] == "BUFFER" {
 			if ts, err := strconv.ParseFloat(p[1], 64); err == nil {
-				bufs = append(bufs, reportRow{ts, "BUF", p[5]})
+				bufs = append(bufs, reportRow{ts: ts, tag: "BUF", detail: p[5]})
 			}
 		}
 	}
@@ -316,7 +321,7 @@ func report(n int) []reportItem {
 				continue
 			}
 			if ts >= t0 {
-				merged = append(merged, reportRow{ts, "EXEC", p[5]})
+				merged = append(merged, reportRow{ts: ts, tag: "EXEC", detail: p[5]})
 			}
 		}
 	}
@@ -334,15 +339,19 @@ func report(n int) []reportItem {
 			continue
 		}
 		if p[1] == "KEY" && len(p) >= 6 {
-			merged = append(merged, reportRow{ts, "KEY",
-				fmt.Sprintf("%s %s val=%s", p[3], p[4], p[5])})
+			kind := ""
+			if len(p) >= 7 {
+				kind = p[6]
+			}
+			merged = append(merged, reportRow{ts: ts, tag: "KEY",
+				detail: fmt.Sprintf("%s %s val=%s", p[3], p[4], p[5]), kind: kind})
 		} else if p[1] == "DEVICE_ADDED" || p[1] == "DEVICE_REMOVED" {
 			extra := ""
 			if len(p) >= 4 {
 				extra = p[3]
 			}
-			merged = append(merged, reportRow{ts, "DEV",
-				fmt.Sprintf("%s %s", p[1], extra)})
+			merged = append(merged, reportRow{ts: ts, tag: "DEV",
+				detail: fmt.Sprintf("%s %s", p[1], extra)})
 		}
 	}
 
@@ -350,7 +359,7 @@ func report(n int) []reportItem {
 
 	items := make([]reportItem, 0, len(merged))
 	for _, m := range merged {
-		items = append(items, reportItem{Ts: m.ts, Tag: m.tag, Detail: m.detail})
+		items = append(items, reportItem{Ts: m.ts, Tag: m.tag, Detail: m.detail, Kind: m.kind})
 	}
 	return items
 }

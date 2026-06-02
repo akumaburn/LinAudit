@@ -59,6 +59,15 @@ linaudit status | enable LAYER | disable LAYER | logs WHICH | report [N] | live 
 
 ## How to read the next occurrence
 
+Each `KEY` record in `keys.log` carries a trailing **bus** field classified from
+the device's `phys` at open time: `wired` (USB / PS-2), `wireless` (Bluetooth),
+`virtual` (uinput / no topology -- the software-injection signature), or `other`.
+The web dashboard hides `wired` keystrokes by default (both the Logs > keystrokes
+tab and the Timeline), so the routine physical-keyboard noise is suppressed and
+only wireless / virtual / unidentified sources are shown, each tagged with its
+bus. A "show wired" toggle (or the `w` key) reveals everything; the CLI
+(`linaudit report` / `logs keys`) always shows the full stream.
+
 Run `linaudit report 25` (or the timeline panel) and read around the moment:
 
 - Prompt text **grows one char at a time**, each `KEY` from a real keyboard
