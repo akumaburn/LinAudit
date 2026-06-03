@@ -34,7 +34,9 @@ the evidence at rest, and presents it in a password-protected local dashboard.
   Host allowlist + Origin / Sec-Fetch checks; Overview / Network / Processes / Logs /
   Timeline.
 - **Network panel** -- per-process bandwidth read from the kernel over netlink (no
-  `ss` / iproute2 dependency), reverse DNS, and an offline GeoIP world-map choropleth.
+  `ss` / iproute2 dependency), reverse DNS, an offline GeoIP world-map choropleth,
+  and offline ASN/owner classification (known corp / cloud / cdn / gov / telecom
+  networks vs unknown) so you can see *who* each peer belongs to, not just where.
 - **One static Go binary** -- pure standard library, no interpreter or shared
   libraries, assets embedded via `go:embed`; builds for amd64 / arm64 / arm / 386.
 
@@ -126,11 +128,19 @@ The dashboard's network section answers "what is my machine talking to":
 - Processes by bandwidth -- every listening or actively-connected process, sorted
   by current rx+tx (delta of the kernel's per-socket `tcp_info` byte counters read
   over netlink, sampled every 2s), with its listening ports.
-- Remote connections -- each established peer with reverse-DNS hostname and GeoIP
-  country flag. LAN/private/CGNAT/multicast peers are classified locally and
-  excluded from rDNS, GeoIP, and the map; they are also hidden from the
-  connection list, country bars, and counts by default (a "show LAN" toggle and
-  the `l` key bring them back for a full local + remote view).
+- Remote connections -- each established peer with reverse-DNS hostname, GeoIP
+  country flag, and its owning network. LAN/private/CGNAT/multicast peers are
+  classified locally and excluded from rDNS, GeoIP, and the map; they are also
+  hidden from the connection list, country bars, and counts by default (a "show
+  LAN" toggle and the `l` key bring them back for a full local + remote view).
+- Owner networks -- each remote peer is resolved to its ASN and organization via
+  an offline ASN database, then bucketed into a colour-coded category: corp
+  (Microsoft / Apple / Google / ...), cloud (AWS / Azure / GCP / Hetzner / ...),
+  cdn (Cloudflare / Akamai / Fastly / ...), gov (government / military,
+  best-effort), telecom (consumer ISPs / carriers), or unknown (no ASN match).
+  A legend strip shows the known-vs-unknown breakdown and one-click filters the
+  table by category. Government detection is heuristic (AS-name keywords plus a
+  small curated ASN list) and intentionally conservative to avoid false positives.
 - World map -- an offline choropleth highlighting the countries of current
   connections.
 
@@ -138,8 +148,9 @@ Socket data is read straight from the kernel over netlink (`NETLINK_SOCK_DIAG` /
 `INET_DIAG`, including per-socket `tcp_info` byte counters), so there is no
 dependency on the `ss`/iproute2 binary. Everything is offline except reverse-DNS,
 which uses the system resolver (same as normal browsing) and can be turned off.
-GeoIP is a bundled local DB; no observed IP is ever sent to a third party. (UDP
-exposes no per-socket byte counters, so UDP shows as connections without bandwidth.)
+GeoIP country and ASN/owner lookups both use bundled local DBs; no observed IP is
+ever sent to a third party. (UDP exposes no per-socket byte counters, so UDP shows
+as connections without bandwidth.)
 
 ## Repository layout / deployment map
 
@@ -157,7 +168,7 @@ The runtime is one statically-linked binary built from the Go packages
 | `inputmon/linaudit-input.service` | `/etc/systemd/system/` | `ExecStart=/usr/local/bin/linaudit input` |
 | `web/linaudit-web.service` | `/etc/systemd/system/` | `ExecStart=/usr/local/bin/linaudit web` |
 | `storage/linaudit-store.service` | `/etc/systemd/system/` | `ExecStart=/usr/local/bin/linaudit store up`; ordered before the writers |
-| `data/fetch-geoip.sh` | downloads to `/usr/local/share/linaudit/geoip/` | offline IP->country DB (CC BY 4.0) |
+| `data/fetch-geoip.sh` | downloads to `/usr/local/share/linaudit/geoip/` | offline IP->country + IP->ASN/org DBs (CC BY 4.0) |
 | `system/linaudit.rules` | `/etc/audit/rules.d/` | auditd (`augenrules --load`) |
 | `system/97-linaudit.rules` | `/etc/udev/rules.d/` | USB/input add-remove -> journal |
 | `system/linaudit.logrotate` | `/etc/logrotate.d/linaudit` | daily, 14 days; installer templates the monitored user |
@@ -247,6 +258,8 @@ hooks -- `shell/linaudit.zsh` sourced from `~/.zshrc`, `shell/linaudit.bash` fro
 
 - GeoIP: `ip-location-db` geo-whois-asn-country (CC BY 4.0, by NRO) -- fetched via
   `data/fetch-geoip.sh`, not vendored.
+- ASN/org: `ip-location-db` asn (CC BY 4.0, by RouteViews / DB-IP / NRO) -- fetched
+  via `data/fetch-geoip.sh`, not vendored.
 - World map: `simple-world-map` (`web/world.svg`) by Al MacDonald / Fritz Lekschas,
   CC BY-SA 3.0.
 

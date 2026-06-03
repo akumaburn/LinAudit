@@ -68,8 +68,8 @@ fi
 
 # --- offline GeoIP DB (optional) ---
 if [ "${SKIP_GEOIP:-0}" != 1 ]; then
-  echo "==> fetching offline GeoIP DB"
-  sh "$REPO/data/fetch-geoip.sh" || echo "install: GeoIP fetch failed (network?); the map degrades gracefully"
+  echo "==> fetching offline GeoIP country + ASN/org DBs"
+  sh "$REPO/data/fetch-geoip.sh" || echo "install: GeoIP/ASN fetch failed (network?); the map + owner classification degrade gracefully"
 fi
 
 systemctl daemon-reload

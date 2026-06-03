@@ -24,8 +24,9 @@ const (
 	maxRows        = 512
 )
 
-// ATTRIBUTION is the GeoIP/map credit string, byte-for-byte from netmon.py.
+// attribution is the GeoIP / ASN / map credit string for the offline datasets.
 const attribution = "GeoIP: ip-location-db geo-whois-asn-country (CC BY 4.0, NRO). " +
+	"ASN/org: ip-location-db asn (CC BY 4.0, RouteViews/DB-IP/NRO). " +
 	"Map: simple-world-map by Al MacDonald / flekschas (CC BY-SA 3.0)."
 
 // ----------------------------- JSON contract types -------------------------
@@ -46,7 +47,9 @@ type processRow struct {
 	Listen []listenRow `json:"listen"`
 }
 
-// connRow is one established connection.
+// connRow is one established connection. ASN/Org/Cat describe the peer's owning
+// network (offline ASN lookup + category classification); they are omitted for
+// LAN peers and for global peers with no ASN match.
 type connRow struct {
 	Proc    string  `json:"proc"`
 	PID     int     `json:"pid"`
@@ -58,17 +61,24 @@ type connRow struct {
 	Scope   string  `json:"scope"`
 	Host    *string `json:"host"`
 	Country *string `json:"country"`
+	ASN     uint32  `json:"asn,omitempty"`
+	Org     string  `json:"org,omitempty"`
+	Cat     string  `json:"cat,omitempty"`
 }
 
-// snapshot is the marshaled /api/net document.
+// snapshot is the marshaled /api/net document. Categories tallies global
+// (remote) connections by owning-network category (corp/cloud/cdn/gov/telecom/
+// other) plus "unknown" for peers with no ASN match.
 type snapshot struct {
 	Processes    []processRow   `json:"processes"`
 	Connections  []connRow      `json:"connections"`
 	Countries    map[string]int `json:"countries"`
+	Categories   map[string]int `json:"categories"`
 	PrivateCount int            `json:"private_count"`
 	Time         float64        `json:"time"`
 	RdnsEnabled  bool           `json:"rdns_enabled"`
 	GeoipReady   bool           `json:"geoip_ready"`
+	ASNReady     bool           `json:"asn_ready"`
 	Attribution  string         `json:"attribution"`
 }
 
@@ -114,6 +124,7 @@ var (
 		Processes:   []processRow{},
 		Connections: []connRow{},
 		Countries:   map[string]int{},
+		Categories:  map[string]int{},
 	}
 )
 
@@ -124,6 +135,7 @@ var (
 func Start(geodir string, rdnsEnabled bool) {
 	rdns.startRDNS(rdnsEnabled)
 	go loadGeoIP(geodir)
+	go loadASN(geodir)
 	go sampler()
 }
 
@@ -145,8 +157,12 @@ func SnapshotJSON() any {
 	if s.Countries == nil {
 		s.Countries = map[string]int{}
 	}
+	if s.Categories == nil {
+		s.Categories = map[string]int{}
+	}
 	s.RdnsEnabled = rdns.enabled
 	s.GeoipReady = Ready()
+	s.ASNReady = ASNReady()
 	s.Attribution = attribution
 	return s
 }
@@ -297,6 +313,7 @@ func build(prev, cur map[connKey]connState, dt float64, listeners []listenerEntr
 	conns := []connRow{}
 	perpid := map[int]*pidAgg{}
 	countries := map[string]int{}
+	categories := map[string]int{}
 	private := 0
 
 	// aggFor fetches-or-creates the aggregate for a pid, upgrading a "?"/""
@@ -340,12 +357,23 @@ func build(prev, cur map[connKey]connState, dt float64, listeners []listenerEntr
 		scope := classify(c.peerIP)
 		var host *string
 		var cc *string
+		var cAsn uint32
+		var cOrg, cCat string
 		if scope == "global" {
 			host = rdns.resolve(c.peerIP)
 			if code := country(c.peerIP); code != "" {
 				cc = &code
 				countries[code]++
 			}
+			// Owning-network classification (offline ASN -> org -> category).
+			catKey := "unknown"
+			if asn, org := asnLookup(c.peerIP); org != "" || asn != 0 {
+				cAsn = asn
+				cOrg = org
+				cCat = categorize(asn, org)
+				catKey = cCat
+			}
+			categories[catKey]++
 		}
 		if scope == "lan" {
 			private++
@@ -362,6 +390,9 @@ func build(prev, cur map[connKey]connState, dt float64, listeners []listenerEntr
 			Scope:   scope,
 			Host:    host,
 			Country: cc,
+			ASN:     cAsn,
+			Org:     cOrg,
+			Cat:     cCat,
 		})
 
 		if c.hasProc { // aggregate only attributed sockets (never merge fake pid 0)
@@ -399,6 +430,7 @@ func build(prev, cur map[connKey]connState, dt float64, listeners []listenerEntr
 		Processes:    capProcesses(procsList),
 		Connections:  capConns(conns),
 		Countries:    countries,
+		Categories:   categories,
 		PrivateCount: private,
 	}
 }

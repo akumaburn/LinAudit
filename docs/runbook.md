@@ -95,6 +95,39 @@ Run `linaudit report 25` (or the timeline panel) and read around the moment:
 - Unexpected `linaudit-usb` journal entry near the event -> investigate that USB
   device (possible BadUSB).
 
+## Network owners (known vs unknown peers)
+
+The network panel resolves every remote peer to its **ASN and organization** from
+an offline database (`/usr/local/share/linaudit/geoip/asn-ipv{4,6}.csv`, fetched
+by `data/fetch-geoip.sh`) and buckets it into a colour-coded category shown in the
+connection table's *owner* column, with a legend strip giving the known-vs-unknown
+breakdown (click a category to filter):
+
+- `corp` -- big tech / enterprise (Microsoft, Apple, Google, Meta, ...).
+- `cloud` -- cloud / hosting / VPS (AWS, Azure, GCP, Hetzner, DigitalOcean, ...).
+- `cdn` -- content-delivery / edge (Cloudflare, Akamai, Fastly, ...).
+- `gov` -- government / military (best-effort; see caveat).
+- `telecom` -- consumer ISPs / carriers (Comcast, Vodafone, ...).
+- `unknown` -- no ASN match at all; `other` -- ASN resolved but not a named
+  category (its org name is still shown).
+
+Forensic use: most normal traffic is `corp` / `cloud` / `cdn`. A connection to an
+`unknown` network, an unexpected `gov` peer, or a long-lived flow to a bare VPS
+(`other` / a small hosting ASN) next to a suspicious shell or keystroke event is
+worth investigating. The owner is shown alongside the country flag and reverse
+DNS, so "US + Cloudflare + cdn" reads very differently from "unknown country +
+unknown ASN".
+
+Caveat -- the classification is heuristic and offline. Cloud regions inherit their
+parent's category (Azure shows as `corp` because its AS-name is "Microsoft
+Corporation"; AWS as `cloud`). **Government detection in particular is best-effort**:
+it matches government/military markers in the AS-name plus a small curated ASN list,
+deliberately conservative to avoid false positives (e.g. "Federal Express",
+"Salvation Army", "Governors State University" are *not* flagged), so it will miss
+many public networks and may occasionally mislabel one. Treat `gov` as a hint, not
+proof. The provider/gov tables live in `web/netmon/orgcat.go` and are trivial to
+extend.
+
 ## Services / recovery
 
 - Units: `linaudit-store.service` (unlock+mount) -> `linaudit-input.service`,

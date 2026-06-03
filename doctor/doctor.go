@@ -101,6 +101,19 @@ func Run() error {
 	} else {
 		add(miss, "/proc", "not readable -- process monitor unavailable")
 	}
+
+	// --- offline network-enrichment databases (optional; degrade gracefully) ---
+	const geoDir = "/usr/local/share/linaudit/geoip"
+	if fileExists(geoDir+"/ipv4.csv") && fileExists(geoDir+"/ipv6.csv") {
+		add(ok, "geoip country db", geoDir+" -- connections resolve to country + world map")
+	} else {
+		add(warn, "geoip country db", "absent -- run `sudo sh data/fetch-geoip.sh`; the country column and map degrade gracefully")
+	}
+	if fileExists(geoDir+"/asn-ipv4.csv") && fileExists(geoDir+"/asn-ipv6.csv") {
+		add(ok, "asn/org db", geoDir+" -- peers classified by owning network (corp/cloud/cdn/gov/telecom)")
+	} else {
+		add(warn, "asn/org db", "absent -- run `sudo sh data/fetch-geoip.sh`; the owner column shows 'unknown' for every peer")
+	}
 	rs = append(rs, inputDevicesLevel())
 	if fileExists("/dev/uinput") {
 		add(ok, "/dev/uinput", "present -- software-injection (uinput) auditing possible")

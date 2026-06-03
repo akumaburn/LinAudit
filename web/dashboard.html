@@ -343,6 +343,28 @@
   .crow.lan .bar{background:linear-gradient(90deg,#5a4a2a,#e3b341)}
   .crow.lan .n{color:var(--yel)}
 
+  /* network-owner category chips (offline ASN org classification) */
+  .netcat{display:inline-block;font-size:9.5px;font-weight:700;line-height:1.55;padding:0 5px;border-radius:4px;
+    text-transform:uppercase;letter-spacing:.03em;vertical-align:middle;border:1px solid transparent;white-space:nowrap}
+  .netcat.corp{color:#79b8ff;background:rgba(56,139,253,.13);border-color:rgba(56,139,253,.40)}
+  .netcat.cloud{color:var(--yel);background:rgba(227,179,65,.12);border-color:rgba(227,179,65,.38)}
+  .netcat.cdn{color:var(--mag);background:rgba(210,168,255,.12);border-color:rgba(210,168,255,.38)}
+  .netcat.gov{color:#ff7b72;background:rgba(248,81,73,.15);border-color:rgba(248,81,73,.46)}
+  .netcat.telecom{color:var(--cyan);background:rgba(86,212,221,.12);border-color:rgba(86,212,221,.38)}
+  .netcat.other{color:#9aa6b3;background:rgba(93,104,120,.18);border-color:rgba(93,104,120,.40)}
+  .netcat.unknown{color:var(--dim);background:rgba(93,104,120,.10);border-color:rgba(93,104,120,.28)}
+  .owner{display:flex;align-items:center;gap:6px;max-width:260px}
+  .owner .oname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+  /* category legend strip above the connections table (click a chip to filter) */
+  .netlegend{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 2px 4px}
+  .netlegend .lgttl{font-size:11px;color:var(--dim);margin-right:2px}
+  .netlegend .lgchip{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);
+    cursor:pointer;padding:2px 6px;border-radius:6px;border:1px solid transparent;user-select:none;transition:background .15s,border-color .15s}
+  .netlegend .lgchip:hover{background:var(--panel2);border-color:var(--line)}
+  .netlegend .lgchip.active{background:var(--panel2);border-color:var(--accent)}
+  .netlegend .lgchip .lgn{font-variant-numeric:tabular-nums;font-weight:600;color:var(--txt)}
+  .netlegend .lgempty{font-size:11px;color:var(--dim2);padding:2px 4px}
+
   /* bandwidth bar cell (process + connection tables) */
   .bw{display:flex;align-items:center;gap:8px;min-width:118px}
   .bw .bwbar{flex:1;height:8px;border-radius:4px;background:var(--panel2);overflow:hidden;border:1px solid var(--line2);position:relative}
@@ -583,8 +605,9 @@
         </div>
         <div class="panel">
           <div class="bar"><span class="title">remote connections</span>
-            <span class="meta">reverse-DNS + country &middot; local/LAN hidden by default</span>
+            <span class="meta">reverse-DNS + country + owner network &middot; local/LAN hidden by default</span>
             <span class="right"><button class="btn sm" id="lanToggle" title="show/hide local, LAN, and private connections (l)">show LAN</button><input class="filter" id="connFilter" type="text" placeholder="filter connections (/)" autocomplete="off"></span></div>
+          <div class="netlegend" id="netlegend"></div>
           <div class="scroll mid" id="netconns"><div class="loading"><span class="spin"></span>loading&hellip;</div></div>
         </div>
       </section>
@@ -1071,6 +1094,7 @@ function sortRows(rows,which){
     peer:o=>String(o.peer||'').toLowerCase(),
     host:o=>String(o.host||'').toLowerCase(),
     country:o=>String(o.country||'').toLowerCase(),
+    org:o=>String(o.org||'').toLowerCase(),
   }[st.key]||(o=>bwOf(o));
   const arr=rows.slice();
   arr.sort((a,b)=>{ const va=get(a),vb=get(b); if(va<vb)return -1*st.dir; if(va>vb)return 1*st.dir; return bwOf(b)-bwOf(a); });
@@ -1203,8 +1227,8 @@ async function renderNet(){
   paintMap(countries);
 
   const ccCount=Object.keys(countries).length;
-  const geo=s.geoip_ready?'ready':'loading…', rdns=s.rdns_enabled?'on':'off';
-  const metaStr=`${procs.length} procs · ${conns.length} conns · geoip ${geo} · rdns ${rdns}`;
+  const geo=s.geoip_ready?'ready':'loading…', rdns=s.rdns_enabled?'on':'off', asnr=s.asn_ready?'ready':'loading…';
+  const metaStr=`${procs.length} procs · ${conns.length} conns · geoip ${geo} · asn ${asnr} · rdns ${rdns}`;
 
   // global throughput totals (rx/tx + distinct countries -- NOT affected by the
   // LAN filter, so set here once per fetch)
@@ -1226,8 +1250,9 @@ async function renderNet(){
   // meta / attribution / subtitle
   $("#netmeta").textContent=metaStr; $("#netmeta-o").textContent=metaStr;
   $("#netattr").textContent=s.attribution||''; $("#netattr-o").textContent=s.attribution||'';
-  $("#netsub").textContent=`offline GeoIP choropleth · geoip ${geo} · rdns ${rdns}`;
+  $("#netsub").textContent=`offline GeoIP choropleth · geoip ${geo} · asn ${asnr} · rdns ${rdns}`;
 
+  renderNetLegend(s.categories||{});
   renderProcTables(procs);
 
   // LAN-filter-affected sections (connection rows + counts, country LAN bar, private chip)
@@ -1298,7 +1323,7 @@ function renderConnTable(conns,newPeers){
   const base=showLan?conns:conns.filter(c=>c.scope!=='lan');
   const fq=connFilter.trim().toLowerCase();
   let rows=base;
-  if(fq) rows=base.filter(c=>(String(c.proc||'')+' '+String(c.peer||'')+' '+String(c.host||'')+' '+String(c.country||'')).toLowerCase().includes(fq));
+  if(fq) rows=base.filter(c=>(String(c.proc||'')+' '+String(c.peer||'')+' '+String(c.host||'')+' '+String(c.country||'')+' '+String(c.org||'')+' '+String(c.cat||'')).toLowerCase().includes(fq));
   rows=sortRows(rows,'conn');
   const maxBw=Math.max(1,...rows.map(bwOf));        // scale bars to the shown rows
 
@@ -1307,13 +1332,51 @@ function renderConnTable(conns,newPeers){
     const host=c.host?esc(c.host):(isg?'<span class="cd">&mdash;</span>':'');
     const isNew=newPeers.has(c.peer+':'+c.port);
     const tag=isNew?'<span class="newtag">NEW</span>':'';
-    return `<tr class="${isNew?'isnew':''}"><td>${esc(c.proc)}</td><td class="cd">${esc(c.peer)}:${esc(String(c.port))}${tag}</td><td>${host}</td><td class="cd">${cc}</td><td class="cd" title="first seen">${esc(ageFmt(c._seen))}</td>`+
+    return `<tr class="${isNew?'isnew':''}"><td>${esc(c.proc)}</td><td class="cd">${esc(c.peer)}:${esc(String(c.port))}${tag}</td><td>${host}</td><td class="cd">${cc}</td><td>${ownerCell(c)}</td><td class="cd" title="first seen">${esc(ageFmt(c._seen))}</td>`+
       bwCell(c.rx_bps,'rx',maxBw)+bwCell(c.tx_bps,'tx',maxBw)+`</tr>`; }).join('');
-  const head=`<tr>${thSort('conn','name','process')}${thSort('conn','peer','peer')}${thSort('conn','host','reverse dns')}${thSort('conn','country','country')}${thSort('conn','seen','age')}${thSort('conn','rx','&#8595; rx')}${thSort('conn','tx','&#8593; tx')}</tr>`;
-  const empty=fq?`<tr><td colspan="7"><div class="empty"><span class="eic">&#128269;</span>no connections match &ldquo;${esc(connFilter)}&rdquo;</div></td></tr>`
-               :(hiddenLan>0?`<tr><td colspan="7"><div class="empty"><span class="eic">&#127968;</span>${hiddenLan} local/LAN connection${hiddenLan===1?'':'s'} hidden &middot; <a href="#" onclick="setShowLan(true);return false">show LAN</a></div></td></tr>`
-                            :`<tr><td colspan="7"><div class="empty"><span class="eic">&#127757;</span>(no active connections)</div></td></tr>`);
+  const head=`<tr>${thSort('conn','name','process')}${thSort('conn','peer','peer')}${thSort('conn','host','reverse dns')}${thSort('conn','country','country')}${thSort('conn','org','owner')}${thSort('conn','seen','age')}${thSort('conn','rx','&#8595; rx')}${thSort('conn','tx','&#8593; tx')}</tr>`;
+  const empty=fq?`<tr><td colspan="8"><div class="empty"><span class="eic">&#128269;</span>no connections match &ldquo;${esc(connFilter)}&rdquo;</div></td></tr>`
+               :(hiddenLan>0?`<tr><td colspan="8"><div class="empty"><span class="eic">&#127968;</span>${hiddenLan} local/LAN connection${hiddenLan===1?'':'s'} hidden &middot; <a href="#" onclick="setShowLan(true);return false">show LAN</a></div></td></tr>`
+                            :`<tr><td colspan="8"><div class="empty"><span class="eic">&#127757;</span>(no active connections)</div></td></tr>`);
   safeRender($("#netconns"),`<table><thead>${head}</thead><tbody>${cn||empty}</tbody></table>`);
+}
+
+/* owner-network cell: a coloured category chip + the org name (full ASN/org in
+   the tooltip). LAN peers show a dash; global peers with no ASN match show a
+   muted "unknown" chip so known vs unknown is visible at a glance. */
+const CAT_LABELS={corp:'corp',cloud:'cloud',cdn:'cdn',gov:'gov',telecom:'telecom',other:'other'};
+function ownerCell(c){
+  if(c.scope!=='global') return '<span class="cd">&mdash;</span>';
+  const org=c.org||'';
+  if(!org) return '<span class="netcat unknown" title="no ASN match in the offline DB">unknown</span>';
+  const cat=CAT_LABELS[c.cat]?c.cat:'other';
+  const ttl=(c.asn?('AS'+c.asn+' · '):'')+org;
+  const nm=org.length>40?org.slice(0,39)+'…':org;
+  return `<div class="owner" title="${esc(ttl)}"><span class="netcat ${cat}">${esc(cat)}</span><span class="oname">${esc(nm)}</span></div>`;
+}
+
+/* category legend strip above the connections table -- shows the known/unknown
+   breakdown of remote peers and doubles as a one-click category filter. */
+const LEGEND_ORDER=['corp','cloud','cdn','gov','telecom','other','unknown'];
+function renderNetLegend(cats){
+  const el=$("#netlegend"); if(!el) return;
+  const shown=LEGEND_ORDER.filter(k=>(cats[k]||0)>0);
+  if(!shown.length){ el.innerHTML='<span class="lgempty">no remote connections to classify</span>'; return; }
+  const fq=connFilter.trim().toLowerCase();
+  const chips=shown.map(k=>{
+    const n=cats[k]||0, active=(fq===k)?' active':'';
+    return `<span class="lgchip${active}" onclick="setConnCatFilter('${k}')" title="filter ${k} connections">`+
+           `<span class="netcat ${k}">${k}</span><span class="lgn">${n}</span></span>`;
+  }).join('');
+  el.innerHTML=`<span class="lgttl">owner networks:</span>${chips}`;
+}
+
+/* toggle the connection filter to a category (click the same chip again to clear) */
+function setConnCatFilter(cat){
+  connFilter=(connFilter.trim().toLowerCase()===cat)?'':cat;
+  const inp=$("#connFilter"); if(inp) inp.value=connFilter;
+  rerenderNetFromCache();
+  if(lastNet) renderNetLegend(lastNet.categories||{});
 }
 
 /* re-render network tables from cached payload (for sort/filter without a fetch) */
@@ -1321,6 +1384,7 @@ function rerenderNetFromCache(){
   if(!lastNet) return;
   renderProcTables(lastNet.processes||[]);
   renderConnTable(lastNet.connections||[],new Set());   // no new-highlight on a pure re-sort
+  renderNetLegend(lastNet.categories||{});              // keep the active-chip highlight in sync
 }
 
 /* sortable header clicks (delegated; works after every re-render) */
@@ -1328,7 +1392,7 @@ document.addEventListener('click',e=>{
   const th=e.target.closest('th.sortable'); if(!th) return;
   const [which,key]=th.dataset.sort.split(':');
   const st=sortState[which]; if(!st) return;
-  if(st.key===key) st.dir=-st.dir; else { st.key=key; st.dir=(key==='name'||key==='peer'||key==='host'||key==='country'||key==='user')?1:-1; }
+  if(st.key===key) st.dir=-st.dir; else { st.key=key; st.dir=(key==='name'||key==='peer'||key==='host'||key==='country'||key==='org'||key==='user')?1:-1; }
   if(which==='res'){ if(lastProc) renderResTable(lastProc.processes||[]); } else rerenderNetFromCache();
 });
 
