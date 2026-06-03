@@ -9,12 +9,24 @@ web dashboard is password-protected.
 
 | Plane | Component | Log (inside encrypted store) | Owner |
 |-------|-----------|------------------------------|-------|
-| Prompt text (typed or pasted, even unexecuted) + executed commands | zsh hooks (`~/.config/zsh/linaudit.zsh`) | `/var/log/linaudit/shell/{buffer,commands}.log` | you |
+| Prompt text (even unexecuted, zsh only) + executed commands (bash/zsh/fish) | shell hooks (`~/.config/{zsh/linaudit.zsh,bash/linaudit.bash,fish/conf.d/linaudit.fish}`) | `/var/log/linaudit/shell/{buffer,commands}.log` | you |
 | Physical/virtual keystroke source | `linaudit-input.service` | `/var/log/linaudit/input/keys.log` | root |
 | Executions, `/dev/uinput` access, USB add/remove | `auditd` + udev rule | `ausearch -k cmd_exec` / `-k uinput_inject`; `journalctl -t linaudit-usb` | root |
 
 Backward-compat symlinks point the old paths (`/var/log/linaudit/input/keys.log`,
 `~/.local/share/linaudit/{buffer,commands}.log`) at the encrypted store.
+
+Shell coverage: the prompt/command plane has a hook per common shell, all writing
+the same `commands.log`/`buffer.log` in one format and all gated by one shared
+`~/.local/share/linaudit/disabled` flag (so `linaudit disable shell` or the
+dashboard toggle stops every shell at once). Only zsh can record *unexecuted*
+prompt text (`buffer.log`) -- it is the one shell whose line editor exposes a
+per-keystroke hook. bash and fish record *executed* commands (`commands.log`)
+via their preexec equivalents (bash logs at command completion since it has no
+pre-execution full-line hook; fish and zsh log just before execution). For
+bash/fish the "typed vs pasted/injected" call comes from correlating each
+command against `keys.log` (the shell-agnostic keystroke plane), exactly as
+below -- a command with no preceding `KEY` burst was pasted or injected.
 
 ## Encryption at rest (LUKS2 + TPM)
 

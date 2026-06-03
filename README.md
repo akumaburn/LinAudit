@@ -2,16 +2,16 @@
 
 A local host-monitoring and input-forensics stack for Linux, shipped as one static
 Go binary that runs on any popular systemd distro (built and tested on Manjaro/Arch,
-GNOME/Wayland, zsh). It was born from a concrete question -- "why do commands I never
+GNOME/Wayland, zsh and bash). It was born from a concrete question -- "why do commands I never
 typed sometimes appear in my terminal?" -- and grew into a small, self-contained
 system that records what happens at the input, shell, and process layers, encrypts
 the evidence at rest, and presents it in a password-protected local dashboard.
 
 <p align="center">
   <img src="screenshot.png" width="900"
-       alt="LinAudit Overview dashboard: the monitor-health rail (zsh / input / audit), the encrypted-store badge, live keystroke/buffer/connection counts, global rx/tx throughput, and an offline GeoIP world map of current connections">
+       alt="LinAudit Overview dashboard: the monitor-health rail (shell / input / audit), the encrypted-store badge, live keystroke/buffer/connection counts, global rx/tx throughput, and an offline GeoIP world map of current connections">
 </p>
-<p align="center"><sub>Overview &mdash; monitor health (zsh / input / audit), encrypted-store status, live throughput, and the offline GeoIP map of current connections.</sub></p>
+<p align="center"><sub>Overview &mdash; monitor health (shell / input / audit), encrypted-store status, live throughput, and the offline GeoIP map of current connections.</sub></p>
 
 > Status: complete and in use -- input/shell/exec monitoring, encrypted storage,
 > CLI, web dashboard, and the network panel (listening processes by bandwidth,
@@ -19,8 +19,9 @@ the evidence at rest, and presents it in a password-protected local dashboard.
 >
 > Implemented as a single, statically-linked **Go** binary with no interpreter or
 > shared-library dependency at runtime; the dashboard markup and world map are
-> embedded via `go:embed`. The only non-Go runtime piece is the zsh hook (it must
-> run inside the shell). The sole optional external tool is `nvidia-smi` (GPU VRAM).
+> embedded via `go:embed`. The only non-Go runtime pieces are the shell hooks
+> (bash / zsh / fish -- they must run inside the shell). The sole optional external
+> tool is `nvidia-smi` (GPU VRAM).
 
 ## Highlights
 
@@ -59,7 +60,7 @@ correlates them by timestamp, which lets you tell *typed* from *pasted* from
 
 | Plane | Component | What it captures |
 |-------|-----------|------------------|
-| Prompt text (typed or pasted, even unexecuted) + executed commands | zsh hooks (`shell/linaudit.zsh`) | every line-editor change + every `preexec` command |
+| Prompt text (even unexecuted, zsh only) + executed commands (bash/zsh/fish) | shell hooks (`shell/linaudit.{zsh,bash,fish}`) | zsh: every line-editor change + every executed command; bash/fish: every executed command |
 | Physical / virtual keystroke source | `linaudit-input` service (`inputmon/`) | each key event tagged with its source `/dev/input` device; flags new/virtual (uinput) devices |
 | Executions, `/dev/uinput` access, USB add/remove | `auditd` rules + udev rule (`system/`) | `execve`, uinput-injection signature, BadUSB enumeration |
 
@@ -67,6 +68,12 @@ Correlation key: prompt text that grows one character at a time alongside `KEY`
 events from a real keyboard was *typed*; text that appears all at once with no
 preceding `KEY` was *pasted or injected*; keystrokes from a virtual device or a
 `uinput` open are a *software injector*. See `docs/runbook.md`.
+
+The unexecuted-prompt-text plane (per-keystroke buffer growth) requires zsh's
+line editor, so it is captured for zsh only. bash and fish capture executed
+commands; the same typed-vs-pasted-vs-injected call is still made for them by
+correlating each command against the shell-agnostic keystroke plane (a command
+that appears with no preceding `KEY` burst was pasted or injected).
 
 ## Encryption at rest (LUKS2 + TPM)
 
@@ -144,7 +151,9 @@ The runtime is one statically-linked binary built from the Go packages
 |-----------|-------------|-------|
 | `cmd/linaudit` + the Go packages | `/usr/local/bin/linaudit` | one static binary; every role is a subcommand |
 | `web/dashboard.html`, `web/world.svg` | embedded in the binary | via `go:embed` -- no sidecar files at runtime |
-| `shell/linaudit.zsh` | `~/.config/zsh/linaudit.zsh` | sourced from `~/.zshrc` (the only non-Go runtime piece) |
+| `shell/linaudit.zsh` | `~/.config/zsh/linaudit.zsh` | sourced from `~/.zshrc`; captures prompt buffer + executed commands |
+| `shell/linaudit.bash` | `~/.config/bash/linaudit.bash` | sourced from `~/.bashrc`; captures executed commands |
+| `shell/linaudit.fish` | `~/.config/fish/conf.d/linaudit.fish` | auto-loaded by fish (no rc edit); captures executed commands |
 | `inputmon/linaudit-input.service` | `/etc/systemd/system/` | `ExecStart=/usr/local/bin/linaudit input` |
 | `web/linaudit-web.service` | `/etc/systemd/system/` | `ExecStart=/usr/local/bin/linaudit web` |
 | `storage/linaudit-store.service` | `/etc/systemd/system/` | `ExecStart=/usr/local/bin/linaudit store up`; ordered before the writers |
@@ -193,14 +202,17 @@ sudo sh install.sh
 It auto-detects the monitored user (override with `LINAUDIT_USER=`), installs the
 binary + units + configs, templates the logrotate user, fetches the offline GeoIP DB
 (`SKIP_GEOIP=1` to skip), runs `linaudit store init` (`SKIP_STORE=1` to skip),
-enables the services, installs the zsh hook, and finishes with `linaudit doctor`.
+enables the services, installs the shell hooks for every shell present
+(bash/zsh/fish), and finishes with `linaudit doctor`.
 
 Prefer to do it by hand: install `./linaudit` to `/usr/local/bin/`; the three units
 from `inputmon/`, `web/`, `storage/` to `/etc/systemd/system/`; the configs from
 `system/` (substituting `__LINAUDIT_USER__` in the logrotate file); run
 `sudo linaudit store init` then `systemctl enable --now linaudit-store
-linaudit-input linaudit-web`; `sudo sh data/fetch-geoip.sh`; and source
-`shell/linaudit.zsh` from your `~/.zshrc`. If `auditd` is installed, `augenrules --load`.
+linaudit-input linaudit-web`; `sudo sh data/fetch-geoip.sh`; and install the shell
+hooks -- `shell/linaudit.zsh` sourced from `~/.zshrc`, `shell/linaudit.bash` from
+`~/.bashrc`, and `shell/linaudit.fish` dropped into `~/.config/fish/conf.d/`
+(auto-loaded). If `auditd` is installed, `augenrules --load`.
 
 ## Security and privacy notes
 
@@ -220,7 +232,8 @@ linaudit-input linaudit-web`; `sudo sh data/fetch-geoip.sh`; and source
 - Targets systemd Linux (all popular distros: Ubuntu/Debian/Fedora/RHEL/Arch/
   openSUSE/Mint/Pop!_OS). The static binary is distro/libc-agnostic; the units and
   configs assume systemd, and the encrypted store needs systemd >= 250 + cryptsetup.
-  zsh is required only for the shell plane; auditd, TPM2, Brave, and nvidia-smi are
+  a supported shell (bash/zsh/fish) is needed only for the shell plane, and only
+  zsh captures unexecuted prompt text; auditd, TPM2, Brave, and nvidia-smi are
   optional and degrade gracefully. `linaudit doctor` reports what is present.
 - Builds for amd64/arm64/arm/386 (verified). Tested on amd64; the evdev decode and
   ioctl numbers assume the asm-generic encoding (x86/arm/arm64), so exotic arches

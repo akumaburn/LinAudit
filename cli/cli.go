@@ -90,13 +90,16 @@ func home() string {
 	return h
 }
 
-// paths bundles the per-user log/flag locations derived from the home directory.
+// paths bundles the per-user log/flag locations derived from the home directory,
+// plus the rc / drop-in locations for each supported shell's hook.
 type paths struct {
-	zdir    string
-	buflog  string
-	cmdlog  string
-	disflag string
-	zshrc   string
+	zdir     string
+	buflog   string
+	cmdlog   string
+	disflag  string
+	zshrc    string
+	bashrc   string
+	fishconf string
 }
 
 // resolvePaths computes the user-relative paths for this invocation.
@@ -104,11 +107,13 @@ func resolvePaths() paths {
 	h := home()
 	zdir := filepath.Join(h, ".local", "share", "linaudit")
 	return paths{
-		zdir:    zdir,
-		buflog:  filepath.Join(zdir, "buffer.log"),
-		cmdlog:  filepath.Join(zdir, "commands.log"),
-		disflag: filepath.Join(zdir, "disabled"),
-		zshrc:   filepath.Join(h, ".zshrc"),
+		zdir:     zdir,
+		buflog:   filepath.Join(zdir, "buffer.log"),
+		cmdlog:   filepath.Join(zdir, "commands.log"),
+		disflag:  filepath.Join(zdir, "disabled"),
+		zshrc:    filepath.Join(h, ".zshrc"),
+		bashrc:   filepath.Join(h, ".bashrc"),
+		fishconf: filepath.Join(h, ".config", "fish", "conf.d", "linaudit.fish"),
 	}
 }
 
@@ -116,10 +121,19 @@ func resolvePaths() paths {
 // layer state
 // -------------------------------------------------------------------------
 
-// zshOn reports whether the zsh layer is active: ~/.zshrc must reference the
-// LinAudit zsh hook AND the disabled flag file must not exist.
-func zshOn(p paths) bool {
-	return fileContains(p.zshrc, "config/zsh/linaudit.zsh") && !fileExists(p.disflag)
+// shellOn reports whether the shell-capture plane is active: at least one
+// supported shell (zsh/bash/fish) wires the LinAudit hook AND the shared disabled
+// flag is absent (one flag gates every shell).
+func shellOn(p paths) bool {
+	return shellHookWired(p) && !fileExists(p.disflag)
+}
+
+// shellHookWired reports whether any supported shell sources/auto-loads the hook:
+// zsh (.zshrc), bash (.bashrc), or fish (the auto-loaded conf.d drop-in).
+func shellHookWired(p paths) bool {
+	return fileContains(p.zshrc, "linaudit.zsh") ||
+		fileContains(p.bashrc, "linaudit.bash") ||
+		fileExists(p.fishconf)
 }
 
 // svcActive reports whether a systemd unit is active (is-active exit 0).
@@ -155,7 +169,7 @@ func dot(pal palette, on bool) string {
 // Status
 // -------------------------------------------------------------------------
 
-// Status prints the three monitoring-layer states (zsh, input, audit) and the
+// Status prints the three monitoring-layer states (shell, input, audit) and the
 // size/line count of the three log files. keys.log usually requires root, so a
 // permission failure degrades to "-"/"?" rather than aborting.
 func Status() error {
@@ -167,8 +181,8 @@ func Status() error {
 	fmt.Fprintln(out, "  ----------------------------------------------------------")
 
 	fmt.Fprintf(out, "   %s  %-26s %s\n",
-		dot(pal, zshOn(p)), "zsh buffer + command log",
-		pal.Dim+"prompt text (even unexecuted) + exec'd cmds"+pal.N)
+		dot(pal, shellOn(p)), "shell prompt + command log",
+		pal.Dim+"exec'd cmds (bash/zsh/fish) + prompt text (zsh)"+pal.N)
 	fmt.Fprintf(out, "   %s  %-26s %s\n",
 		dot(pal, svcActive(inputService)), "input-device attribution",
 		pal.Dim+"which device emitted each keystroke"+pal.N)
@@ -288,18 +302,20 @@ func humanSize(n int64) string {
 // Enable / Disable
 // -------------------------------------------------------------------------
 
-// Enable activates the given layer (zsh, input, audit or all) then prints Status.
+// Enable activates the given layer (shell, input, audit or all) then prints
+// Status. The shell plane covers every supported shell; "zsh"/"bash"/"fish" are
+// accepted as aliases for it (capture is gated by one shared flag).
 func Enable(layer string) error {
 	p := resolvePaths()
 	switch layer {
-	case "zsh":
-		return finishToggle(enableZsh(p))
+	case "shell", "zsh", "bash", "fish":
+		return finishToggle(enableShell(p))
 	case "input":
 		return finishToggle(enableService(inputService, false))
 	case "audit":
 		return finishToggle(enableService(auditService, true))
 	case "all":
-		err := enableZsh(p)
+		err := enableShell(p)
 		if e := enableService(inputService, false); err == nil {
 			err = e
 		}
@@ -308,24 +324,25 @@ func Enable(layer string) error {
 		}
 		return finishToggle(err)
 	default:
-		fmt.Fprintln(os.Stdout, "enable zsh|input|audit|all")
+		fmt.Fprintln(os.Stdout, "enable shell|input|audit|all")
 		return Status()
 	}
 }
 
-// Disable deactivates the given layer (zsh, input, audit or all) then prints
-// Status.
+// Disable deactivates the given layer (shell, input, audit or all) then prints
+// Status. The shell plane covers every supported shell; "zsh"/"bash"/"fish" are
+// accepted as aliases for it (capture is gated by one shared flag).
 func Disable(layer string) error {
 	p := resolvePaths()
 	switch layer {
-	case "zsh":
-		return finishToggle(disableZsh(p))
+	case "shell", "zsh", "bash", "fish":
+		return finishToggle(disableShell(p))
 	case "input":
 		return finishToggle(disableService(inputService))
 	case "audit":
 		return finishToggle(disableService(auditService))
 	case "all":
-		err := disableZsh(p)
+		err := disableShell(p)
 		if e := disableService(inputService); err == nil {
 			err = e
 		}
@@ -334,7 +351,7 @@ func Disable(layer string) error {
 		}
 		return finishToggle(err)
 	default:
-		fmt.Fprintln(os.Stdout, "disable zsh|input|audit|all")
+		fmt.Fprintln(os.Stdout, "disable shell|input|audit|all")
 		return Status()
 	}
 }
@@ -349,31 +366,66 @@ func finishToggle(err error) error {
 	return Status()
 }
 
-// enableZsh appends the LinAudit sourcing block to ~/.zshrc if it is not already
-// present, then removes the disabled flag.
-func enableZsh(p paths) error {
-	if !fileContains(p.zshrc, "config/zsh/linaudit.zsh") {
-		block := "\n# LinAudit\n[[ -f ~/.config/zsh/linaudit.zsh ]] && source ~/.config/zsh/linaudit.zsh\n"
-		f, err := os.OpenFile(p.zshrc, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return fmt.Errorf("append zshrc: %w", err)
-		}
-		if _, err := f.WriteString(block); err != nil {
-			f.Close()
-			return fmt.Errorf("append zshrc: %w", err)
-		}
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("append zshrc: %w", err)
+// enableShell wires the LinAudit hook into each installed supported shell's rc
+// (zsh -> ~/.zshrc, bash -> ~/.bashrc) with a guarded source line, then clears
+// the shared disabled flag. fish auto-loads its hook from ~/.config/fish/conf.d,
+// so it needs no rc edit (the drop-in is placed by the installer). Each source
+// line is guarded, so it is harmless even if a given hook file is not present.
+func enableShell(p paths) error {
+	var firstErr error
+	note := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
+	if commandExists("zsh") {
+		note(wireRc(p.zshrc,
+			"[[ -f ~/.config/zsh/linaudit.zsh ]] && source ~/.config/zsh/linaudit.zsh",
+			"linaudit.zsh"))
+	}
+	if commandExists("bash") {
+		note(wireRc(p.bashrc,
+			"[ -f ~/.config/bash/linaudit.bash ] && . ~/.config/bash/linaudit.bash",
+			"linaudit.bash"))
+	}
+	// fish needs no rc edit: ~/.config/fish/conf.d/linaudit.fish auto-loads.
 	if err := os.Remove(p.disflag); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove disabled flag: %w", err)
+		note(fmt.Errorf("remove disabled flag: %w", err))
+	}
+	return firstErr
+}
+
+// wireRc appends a "# LinAudit" + source line to rc when marker is not already
+// present, creating rc if needed.
+func wireRc(rc, sourceLine, marker string) error {
+	if fileContains(rc, marker) {
+		return nil
+	}
+	block := "\n# LinAudit\n" + sourceLine + "\n"
+	f, err := os.OpenFile(rc, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("append %s: %w", rc, err)
+	}
+	if _, err := f.WriteString(block); err != nil {
+		f.Close()
+		return fmt.Errorf("append %s: %w", rc, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("append %s: %w", rc, err)
 	}
 	return nil
 }
 
-// disableZsh creates/truncates the disabled flag file (`: > DISFLAG`).
-func disableZsh(p paths) error {
+// commandExists reports whether name resolves on PATH.
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// disableShell creates/truncates the shared disabled flag file. Every shell hook
+// (bash/zsh/fish) checks this flag before logging, so one flag disables all of
+// them at once.
+func disableShell(p paths) error {
 	if err := os.MkdirAll(p.zdir, 0700); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
@@ -751,22 +803,23 @@ func splitLines(data []byte) []string {
 // Live
 // -------------------------------------------------------------------------
 
-// Live tails the buffer and keystroke logs together (via sudo, since keys.log is
-// root-owned) and colourises each line by plane: BUFFER -> magenta BUF, KEY ->
-// dim, DEVICE_* -> red. It runs until interrupted (Ctrl-C).
+// Live tails the buffer, command, and keystroke logs together (via sudo, since
+// keys.log is root-owned) and colourises each line by plane: BUFFER -> magenta
+// BUF, EXEC -> yellow, KEY -> dim, DEVICE_* -> red. BUFFER is zsh-only; EXEC
+// covers every shell (bash/zsh/fish). It runs until interrupted (Ctrl-C).
 func Live() error {
 	pal := colors()
-	fmt.Fprintf(os.Stdout, "live unified tail -- Ctrl-C to stop. %sBUF%s=prompt %sKEY%s=keystroke\n",
-		pal.M, pal.N, pal.Dim, pal.N)
+	fmt.Fprintf(os.Stdout, "live unified tail -- Ctrl-C to stop. %sBUF%s=prompt %sEXEC%s=command %sKEY%s=keystroke\n",
+		pal.M, pal.N, pal.Y, pal.N, pal.Dim, pal.N)
 
 	p := resolvePaths()
 	if _, err := os.Stat(p.buflog); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stdout, "%snote%s: %s does not exist yet -- if the store is set up, run `sudo linaudit store up` to mount %s. Tailing anyway; lines appear once logging starts.\n",
 			pal.Y, pal.N, p.buflog, "/var/log/linaudit")
 	}
-	// Mirror the bash: `sudo sh -c "tail -n0 -F BUFLOG KEYLOG 2>/dev/null"`.
-	script := fmt.Sprintf("tail -n0 -F %s %s 2>/dev/null",
-		shellQuote(p.buflog), shellQuote(keyLog))
+	// Mirror the bash: `sudo sh -c "tail -n0 -F BUFLOG CMDLOG KEYLOG 2>/dev/null"`.
+	script := fmt.Sprintf("tail -n0 -F %s %s %s 2>/dev/null",
+		shellQuote(p.buflog), shellQuote(p.cmdlog), shellQuote(keyLog))
 	cmd := exec.Command("sudo", "sh", "-c", script)
 	cmd.Stderr = os.Stderr
 
@@ -788,6 +841,10 @@ func Live() error {
 			idx := strings.LastIndex(line, "\tBUFFER\t")
 			rest := line[idx+len("\tBUFFER\t"):]
 			fmt.Fprintf(os.Stdout, "%sBUF%s %s\n", pal.M, pal.N, rest)
+		case strings.Contains(line, "\tEXEC\t"):
+			idx := strings.LastIndex(line, "\tEXEC\t")
+			rest := line[idx+len("\tEXEC\t"):]
+			fmt.Fprintf(os.Stdout, "%sEXEC%s %s\n", pal.Y, pal.N, rest)
 		case strings.Contains(line, "\tKEY\t"):
 			fmt.Fprintf(os.Stdout, "%sKEY %s%s\n", pal.Dim, line, pal.N)
 		case strings.Contains(line, "DEVICE_ADDED") || strings.Contains(line, "DEVICE_REMOVED"):
@@ -868,7 +925,7 @@ func Menu() error {
 		if err := Status(); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stdout, "  %stoggles%s   [1] zsh   [2] input   [3] auditd\n", pal.Bold, pal.N)
+		fmt.Fprintf(os.Stdout, "  %stoggles%s   [1] shell   [2] input   [3] auditd\n", pal.Bold, pal.N)
 		fmt.Fprintf(os.Stdout, "  %sview%s      [4] buffer  [5] exec  [6] keystrokes  [7] devices  [8] usb\n", pal.Bold, pal.N)
 		fmt.Fprintf(os.Stdout, "  %sanalyze%s   [9] correlate   [0] live tail\n", pal.Bold, pal.N)
 		fmt.Fprintln(os.Stdout, "            [q] quit")
@@ -885,10 +942,10 @@ func Menu() error {
 		p := resolvePaths()
 		switch choice {
 		case "1":
-			if zshOn(p) {
-				reportToggle(disableZsh(p))
+			if shellOn(p) {
+				reportToggle(disableShell(p))
 			} else {
-				reportToggle(enableZsh(p))
+				reportToggle(enableShell(p))
 			}
 		case "2":
 			if svcActive(inputService) {

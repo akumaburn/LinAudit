@@ -72,8 +72,8 @@ var (
 func init() {
 	// Detect the monitored account from the environment + system (see the
 	// identity package). On a host with no resolvable user, homeDir is "" and the
-	// per-user (zsh) paths stay empty -- zshOn()/logmeta() then report the layer
-	// off / zero rather than reading a bogus /home/<literal> path.
+	// per-user (shell) paths stay empty -- shellOn()/logmeta() then report the
+	// layer off / zero rather than reading a bogus /home/<literal> path.
 	linauditUser = identity.User()
 	homeDir = identity.Home()
 	if homeDir != "" {
@@ -424,7 +424,7 @@ func (s *server) issueSession(w http.ResponseWriter) {
 
 // validLayer reports whether layer is one of the toggleable layers.
 func validLayer(layer string) bool {
-	return layer == "zsh" || layer == "input" || layer == "audit"
+	return layer == "shell" || layer == "input" || layer == "audit"
 }
 
 // queryDefault returns the named query parameter or def when missing/empty.

@@ -7,11 +7,11 @@
 //	linaudit input               evdev input-source attribution logger (root)
 //	linaudit store up|down|init  unlock/mount, unmount/close, or create the LUKS store
 //	linaudit status              print monitor status
-//	linaudit enable  LAYER       LAYER = zsh | input | audit | all
+//	linaudit enable  LAYER       LAYER = shell | input | audit | all
 //	linaudit disable LAYER
 //	linaudit logs    WHICH       WHICH = buffer | exec | keys | devices | usb
 //	linaudit report  [N]         correlate the last N prompt entries across planes
-//	linaudit live                live unified tail (buffer + keystrokes)
+//	linaudit live                live unified tail (buffer + commands + keystrokes)
 //	linaudit open                open the dashboard in a browser
 //	linaudit                     interactive control panel (default)
 package main
@@ -28,7 +28,7 @@ import (
 )
 
 // Version is the LinAudit release. Bump on user-visible changes.
-const Version = "2.0.0"
+const Version = "2.1.0"
 
 func main() {
 	args := os.Args[1:]
@@ -118,11 +118,11 @@ usage:
   linaudit input                run the input-source attribution logger
   linaudit store up|down|init   unlock/mount, tear down, or create the encrypted store
   linaudit status               print monitor status and exit
-  linaudit enable  LAYER        LAYER = zsh | input | audit | all
+  linaudit enable  LAYER        LAYER = shell | input | audit | all
   linaudit disable LAYER
   linaudit logs    WHICH        WHICH = buffer | exec | keys | devices | usb
   linaudit report  [N]          correlate the last N prompt entries
-  linaudit live                 live unified tail (buffer + keystrokes)
+  linaudit live                 live unified tail (buffer + commands + keystrokes)
   linaudit open                 open the dashboard in a browser
   linaudit doctor               check environment readiness on this host
   linaudit version

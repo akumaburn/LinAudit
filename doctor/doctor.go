@@ -62,12 +62,25 @@ func Run() error {
 		}
 	}
 	// --- optional external tools ---
-	for _, t := range []string{"systemctl", "journalctl", "auditctl", "nvidia-smi", "zsh", "xdg-open"} {
+	for _, t := range []string{"systemctl", "journalctl", "auditctl", "nvidia-smi", "xdg-open"} {
 		if p, err := exec.LookPath(t); err == nil {
 			add(ok, "tool:"+t+" (optional)", p)
 		} else {
 			add(warn, "tool:"+t+" (optional)", optionalNote(t))
 		}
+	}
+
+	// --- shell plane (prompt/command capture hooks) ---
+	var shells []string
+	for _, s := range []string{"bash", "zsh", "fish"} {
+		if _, err := exec.LookPath(s); err == nil {
+			shells = append(shells, s)
+		}
+	}
+	if len(shells) > 0 {
+		add(ok, "shell plane", fmt.Sprintf("hookable shells: %s -- executed commands captured for all; zsh also records unexecuted prompt text", strings.Join(shells, ", ")))
+	} else {
+		add(warn, "shell plane", "no supported shell (bash/zsh/fish) found in PATH -- the prompt/command plane is unavailable")
 	}
 
 	// --- TPM2 (key sealing) ---
@@ -99,7 +112,7 @@ func Run() error {
 	if u := identity.User(); u != "" {
 		add(ok, "monitored user", fmt.Sprintf("%s (home %s)", u, dash(identity.Home())))
 	} else {
-		add(warn, "monitored user", "unresolved -- set LINAUDIT_USER (the shell/zsh plane needs it); other planes are unaffected")
+		add(warn, "monitored user", "unresolved -- set LINAUDIT_USER (the shell plane needs it); other planes are unaffected")
 	}
 
 	// --- live state ---
@@ -254,8 +267,6 @@ func optionalNote(tool string) string {
 		return "auditd absent -- exec/uinput/USB audit plane off (install: apt install auditd / dnf install audit / pacman -S audit)"
 	case "nvidia-smi":
 		return "absent -- per-process GPU VRAM will be omitted (non-NVIDIA hosts: expected)"
-	case "zsh":
-		return "absent -- the shell prompt/buffer plane needs zsh"
 	case "xdg-open":
 		return "absent -- `linaudit open` falls back to BROWSER / brave / firefox"
 	default:

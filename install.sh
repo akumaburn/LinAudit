@@ -95,18 +95,48 @@ else
 fi
 command -v udevadm >/dev/null 2>&1 && udevadm control --reload-rules 2>/dev/null || true
 
-# --- shell hook (for the monitored user) ---
+# --- shell hooks (for the monitored user) ---
+# Install the hook for every supported shell that is present, so whichever shell
+# the user launches is covered. The shells share one log set and one "disabled"
+# flag. zsh captures unexecuted prompt text too (its line editor allows it);
+# bash and fish capture executed commands. fish auto-loads from conf.d (no rc edit).
 HOMEDIR="$(getent passwd "$LAUSER" | cut -d: -f6)"
 if [ -n "$HOMEDIR" ]; then
-  install -d -m755 "$HOMEDIR/.config/zsh"
-  install -m600 "$REPO/shell/linaudit.zsh" "$HOMEDIR/.config/zsh/linaudit.zsh"
-  chown -R "$LAUSER" "$HOMEDIR/.config/zsh" 2>/dev/null || true
-  ZSHRC="$HOMEDIR/.zshrc"
-  if ! grep -q 'config/zsh/linaudit.zsh' "$ZSHRC" 2>/dev/null; then
-    printf '\n# LinAudit\n[[ -f ~/.config/zsh/linaudit.zsh ]] && source ~/.config/zsh/linaudit.zsh\n' >> "$ZSHRC"
-    chown "$LAUSER" "$ZSHRC" 2>/dev/null || true
+  LAGROUP="$(id -gn "$LAUSER" 2>/dev/null || echo "$LAUSER")"
+  uinstall_d() { install -d -o "$LAUSER" -g "$LAGROUP" -m755 "$1"; }
+  uinstall_f() { install -o "$LAUSER" -g "$LAGROUP" -m600 "$1" "$2"; }
+  # wire_rc RCFILE 'source line' MARKER -- append a guarded source line once.
+  wire_rc() {
+    if ! grep -q "$3" "$1" 2>/dev/null; then
+      printf '\n# LinAudit\n%s\n' "$2" >> "$1"
+      chown "$LAUSER:$LAGROUP" "$1" 2>/dev/null || true
+    fi
+  }
+
+  WIRED=""
+  if command -v zsh >/dev/null 2>&1; then
+    uinstall_d "$HOMEDIR/.config/zsh"
+    uinstall_f "$REPO/shell/linaudit.zsh" "$HOMEDIR/.config/zsh/linaudit.zsh"
+    wire_rc "$HOMEDIR/.zshrc" '[[ -f ~/.config/zsh/linaudit.zsh ]] && source ~/.config/zsh/linaudit.zsh' 'linaudit.zsh'
+    WIRED="$WIRED zsh"
   fi
-  echo "install: shell hook installed; $LAUSER should open a new terminal (or 'exec zsh')"
+  if command -v bash >/dev/null 2>&1; then
+    uinstall_d "$HOMEDIR/.config/bash"
+    uinstall_f "$REPO/shell/linaudit.bash" "$HOMEDIR/.config/bash/linaudit.bash"
+    wire_rc "$HOMEDIR/.bashrc" '[ -f ~/.config/bash/linaudit.bash ] && . ~/.config/bash/linaudit.bash' 'linaudit.bash'
+    WIRED="$WIRED bash"
+  fi
+  if command -v fish >/dev/null 2>&1; then
+    uinstall_d "$HOMEDIR/.config/fish/conf.d"
+    uinstall_f "$REPO/shell/linaudit.fish" "$HOMEDIR/.config/fish/conf.d/linaudit.fish"
+    WIRED="$WIRED fish"
+  fi
+
+  if [ -n "$WIRED" ]; then
+    echo "install: shell hooks installed for:$WIRED; $LAUSER should open a new terminal"
+  else
+    echo "install: no supported shell (bash/zsh/fish) found; the shell prompt/command plane is not wired"
+  fi
 fi
 
 echo

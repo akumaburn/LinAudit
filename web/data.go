@@ -26,9 +26,10 @@ func nowSeconds() float64 {
 
 // ----------------------------- status payload ------------------------------
 
-// layersJSON is the layers block of /api/status.
+// layersJSON is the layers block of /api/status. The "shell" plane covers the
+// prompt/command capture hooks across all supported shells (bash/zsh/fish).
 type layersJSON struct {
-	Zsh   bool `json:"zsh"`
+	Shell bool `json:"shell"`
 	Input bool `json:"input"`
 	Audit bool `json:"audit"`
 }
@@ -111,14 +112,14 @@ func countLines(path string) (int, error) {
 	}
 }
 
-// zshOn reports whether the zsh layer is wired and not disabled: ~/.zshrc must
-// reference the linaudit hook AND the disable flag must be absent.
-func zshOn() bool {
-	wired := false
-	if data, err := os.ReadFile(homeDir + "/.zshrc"); err == nil {
-		wired = strings.Contains(string(data), "config/zsh/linaudit.zsh")
+// shellOn reports whether the shell-capture plane is active: at least one
+// supported shell (zsh/bash/fish) has the LinAudit hook wired AND the shared
+// disable flag is absent. An unresolved user (empty homeDir) reports off.
+func shellOn() bool {
+	if homeDir == "" {
+		return false
 	}
-	if !wired {
+	if !shellHookWired(homeDir) {
 		return false
 	}
 	if _, err := os.Stat(disFlag); err == nil {
@@ -127,11 +128,37 @@ func zshOn() bool {
 	return true
 }
 
+// shellHookWired reports whether any supported shell sources/auto-loads the
+// LinAudit hook from home: zsh (.zshrc), bash (.bashrc), or fish (the auto-loaded
+// conf.d drop-in). The shared disable flag gates capture regardless.
+func shellHookWired(home string) bool {
+	if fileHas(home+"/.zshrc", "linaudit.zsh") {
+		return true
+	}
+	if fileHas(home+"/.bashrc", "linaudit.bash") {
+		return true
+	}
+	if _, err := os.Stat(home + "/.config/fish/conf.d/linaudit.fish"); err == nil {
+		return true
+	}
+	return false
+}
+
+// fileHas reports whether the file at path contains needle as a substring.
+// Missing/unreadable files report false.
+func fileHas(path, needle string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), needle)
+}
+
 // status assembles the /api/status payload.
 func status() statusJSON {
 	return statusJSON{
 		Layers: layersJSON{
-			Zsh:   zshOn(),
+			Shell: shellOn(),
 			Input: svcActive(inputService),
 			Audit: svcActive(auditService),
 		},
@@ -367,9 +394,11 @@ func report(n int) []reportItem {
 // ------------------------------- toggle ------------------------------------
 
 // toggle applies an enable/disable action to a layer and returns the new status.
+// The "shell" plane is gated by the shared disable flag, which every shell hook
+// (bash/zsh/fish) checks, so one toggle affects all of them at once.
 func toggle(layer, action string) statusJSON {
 	switch layer {
-	case "zsh":
+	case "shell":
 		if action == "disable" {
 			if f, err := os.OpenFile(disFlag, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
 				f.Close()

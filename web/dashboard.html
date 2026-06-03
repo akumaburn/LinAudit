@@ -757,7 +757,7 @@ function safeRender(el,html,force){
 
 /* ---- monitor layers (health pills + overview cards) ---- */
 const LAYERS=[
-  {k:"zsh",  n:"zsh buffer + cmd log",       short:"zsh",   d:"Prompt text (even unexecuted) + every executed command."},
+  {k:"shell",n:"shell prompt + cmd log",     short:"shell", d:"Executed commands across bash / zsh / fish; plus unexecuted prompt text on zsh."},
   {k:"input",n:"input-device attribution",   short:"input", d:"Every keystroke tagged with its source device; flags virtual devices."},
   {k:"audit",n:"auditd exec / uinput / usb", short:"audit", d:"Executions, /dev/uinput injection signature, USB add/remove."},
 ];
@@ -830,7 +830,7 @@ async function renderStatus(){
   $("#healthSummary").innerHTML=`<span style="color:${onCount===LAYERS.length?'var(--grn)':'var(--red)'};font-weight:600">${onCount} / ${LAYERS.length}</span> active`;
   $("#cards").innerHTML=LAYERS.map(x=>{
     const on=!!L[x.k];
-    const lm={zsh:lg.buffer,input:lg.keys,audit:null}[x.k];
+    const lm={shell:lg.commands,input:lg.keys,audit:null}[x.k];
     const sz=lm?`<div class="lm">${fmtBytes(lm.bytes)} &middot; ${lm.lines} lines captured</div>`:"";
     return `<div class="layer ${on?'':'off'}">
       <span class="ld ${on?'on':'off'}"></span>
