@@ -93,6 +93,25 @@ if systemctl list-unit-files auditd.service --no-legend 2>/dev/null | grep -q au
 else
   echo "install: auditd not installed -- exec/uinput/USB audit plane is off (optional; see README)"
 fi
+
+# --- audit subj_ctx kernel-log flood mitigation (ONLY on affected kernels) ---
+# Some kernels (observed: 7.0.x Manjaro) flood the kernel ring buffer with
+# "audit: error in audit_log_subj_ctx" because audit_log_subj_ctx() cannot render
+# the AppArmor subject label for unconfined tasks, the failure mode is PRINTK, and
+# the kernel rejects every auditctl AUDIT_SET so it cannot be silenced with
+# `auditctl -f 0`. We install a printk-ratelimit drop-in ONLY when this exact
+# condition is detected (re-asserting the current failure mode is a no-op on
+# healthy kernels and errors on affected ones), so healthy hosts are never masked.
+if command -v auditctl >/dev/null 2>&1 && systemctl is-active --quiet auditd.service 2>/dev/null; then
+  fmode=$(auditctl -s 2>/dev/null | awk '/^failure/{print $2}')
+  apparmor=$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)
+  if [ "$fmode" = "1" ] && [ "$apparmor" = "Y" ] && ! auditctl -f "$fmode" >/dev/null 2>&1; then
+    echo "==> affected kernel detected (audit reconfig rejected + AppArmor subj_ctx flood): installing printk-ratelimit mitigation"
+    install -m644 "$REPO/system/99-linaudit-audit-quiet.conf" /etc/sysctl.d/99-linaudit-audit-quiet.conf
+    sysctl -p /etc/sysctl.d/99-linaudit-audit-quiet.conf >/dev/null 2>&1 || true
+  fi
+fi
+
 command -v udevadm >/dev/null 2>&1 && udevadm control --reload-rules 2>/dev/null || true
 
 # --- shell hooks (for the monitored user) ---

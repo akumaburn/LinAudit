@@ -142,3 +142,39 @@ extend.
 - Re-test the software-injection detector any time, from a checkout of the repo:
   `sudo go run ./test/inject` (or build it once with `go build -o inject ./test/inject`
   and run `sudo ./inject`). It creates a uinput virtual keyboard and emits one KEY_F20.
+
+## Kernel audit log flood (`error in audit_log_subj_ctx`)
+
+On some kernels (observed on 7.0.x Manjaro) the kernel ring buffer / `dmesg`
+floods with:
+
+```
+audit: error in audit_log_subj_ctx
+audit_panic: NN callbacks suppressed
+```
+
+This is a kernel-side regression, not a LinAudit fault. `audit_log_subj_ctx()`
+fails to render the optional `subj=` label for AppArmor-*unconfined* tasks; because
+the audit failure mode is PRINTK, every failure is logged. The volume tracks
+audited-syscall volume 1:1, so LinAudit's system-wide `execve` rule makes it
+constant. The audit *records themselves are intact* -- only the cosmetic `subj=`
+field is missing -- so detection is unaffected.
+
+The normal silence switch is `auditctl -f 0` (failure mode = silent). On the
+affected kernels **every `auditctl` `AUDIT_SET` is rejected** (`-f`, `-b`, `-r` all
+fail; only `auditd`'s pid registration succeeds), so the failure mode cannot be
+changed at runtime and `-f 0` cannot be placed in the rules file either (it would
+break `augenrules --load`). Confirm with: `sudo auditctl -s` (`failure 1`,
+`backlog 0`, `lost 0`) and `sudo auditctl -f 1` returning "error while processing
+parameters".
+
+- **Mitigation (shipped):** `system/99-linaudit-audit-quiet.conf` throttles the
+  benign message at the printk layer (`audit_panic()` honors `printk_ratelimit()`).
+  `install.sh` installs it automatically **only on hosts that exhibit the defect**
+  (so healthy hosts are never masked); `linaudit doctor` reports the condition and
+  whether the mitigation is active. Apply manually with:
+  `sudo install -m644 system/99-linaudit-audit-quiet.conf /etc/sysctl.d/ && sudo sysctl --system`.
+- It only affects legacy `printk_ratelimit()` callers, not the per-callsite
+  `pr_*_ratelimited()` users, so collateral on other kernel logging is small.
+- **Real fix:** boot a kernel without the regression (where `auditctl -f 0` works
+  again); then remove the drop-in and run `sudo sysctl --system`.

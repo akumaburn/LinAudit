@@ -28,7 +28,7 @@ import (
 )
 
 // Version is the LinAudit release. Bump on user-visible changes.
-const Version = "2.2.0"
+const Version = "2.2.1"
 
 func main() {
 	args := os.Args[1:]

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -143,6 +144,9 @@ func Run() error {
 			}
 		}
 	}
+	if r, show := auditFloodLevel(); show {
+		rs = append(rs, r)
+	}
 
 	print(rs)
 	for _, r := range rs {
@@ -223,6 +227,93 @@ func inputDevicesLevel() result {
 
 func serviceActive(svc string) bool {
 	return exec.Command("systemctl", "is-active", "--quiet", svc).Run() == nil
+}
+
+// auditFloodLevel reports on the kernel audit "subj_ctx" log-flood condition.
+//
+// On some kernels (observed on 7.0.x Manjaro) audit_log_subj_ctx() cannot render
+// the optional subj= label for AppArmor-unconfined tasks; because the audit
+// failure mode is PRINTK the kernel floods the ring buffer with
+// "audit: error in audit_log_subj_ctx", and every auditctl AUDIT_SET is rejected
+// so it cannot be silenced with `auditctl -f 0`. LinAudit ships
+// system/99-linaudit-audit-quiet.conf to throttle it at the printk layer.
+//
+// This is best-effort and avoids false positives: it returns a line only when the
+// mitigation is active (OK) or when the affected condition is positively
+// confirmed (WARN). Confirmation needs root (to read the audit failure mode); when
+// it is unavailable, or the host is not affected, no line is emitted.
+func auditFloodLevel() (result, bool) {
+	if _, err := exec.LookPath("auditctl"); err != nil {
+		return result{}, false
+	}
+	if !serviceActive("auditd.service") {
+		return result{}, false
+	}
+	if mitigationActive() {
+		return result{ok, "audit log flood", "printk-ratelimit mitigation active (99-linaudit-audit-quiet.conf) -- AppArmor subj_ctx errors throttled"}, true
+	}
+	mode, okRead := auditFailureMode()
+	if !okRead {
+		return result{}, false // needs root to read; assessed when run as root
+	}
+	if mode != auditFailPrintk {
+		return result{}, false // silent/panic failure mode does not spam the kernel log
+	}
+	if !apparmorEnabled() {
+		return result{}, false // the flood is an AppArmor subject-context failure
+	}
+	// No-op probe: re-assert the CURRENT failure mode. This succeeds on healthy
+	// kernels (no state change) and errors on the affected kernels, which reject
+	// every audit reconfiguration -- the reliable tell. A healthy PRINTK kernel
+	// resolves the AppArmor context fine and does not flood, so we do not warn.
+	if exec.Command("auditctl", "-f", strconv.Itoa(mode)).Run() == nil {
+		return result{}, false
+	}
+	return result{warn, "audit log flood", "kernel floods dmesg with 'error in audit_log_subj_ctx' (AppArmor subj ctx) and rejects `auditctl -f 0` -- run `sudo install -m644 system/99-linaudit-audit-quiet.conf /etc/sysctl.d/ && sudo sysctl --system`, or boot a kernel without the regression"}, true
+}
+
+// auditFailPrintk is AUDIT_FAIL_PRINTK: the audit failure mode that logs delivery
+// failures (incl. subj_ctx errors) to the kernel ring buffer.
+const auditFailPrintk = 1
+
+// mitigationActive reports whether the printk-ratelimit drop-in is installed and
+// in effect (the kernel default burst is 10; the drop-in lowers it).
+func mitigationActive() bool {
+	if !fileExists("/etc/sysctl.d/99-linaudit-audit-quiet.conf") {
+		return false
+	}
+	b, err := os.ReadFile("/proc/sys/kernel/printk_ratelimit_burst")
+	if err != nil {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	return err == nil && n < 10
+}
+
+// auditFailureMode returns the kernel audit failure mode (0 silent, 1 printk,
+// 2 panic) parsed from `auditctl -s`. The bool is false when it cannot be read
+// (auditctl absent, or not running as root).
+func auditFailureMode() (int, bool) {
+	out, err := exec.Command("auditctl", "-s").Output()
+	if err != nil {
+		return 0, false
+	}
+	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	for sc.Scan() {
+		if v, found := strings.CutPrefix(sc.Text(), "failure "); found {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// apparmorEnabled reports whether AppArmor is the active LSM (its subject-context
+// resolution is what fails in the audit_log_subj_ctx flood).
+func apparmorEnabled() bool {
+	b, err := os.ReadFile("/sys/module/apparmor/parameters/enabled")
+	return err == nil && strings.TrimSpace(string(b)) == "Y"
 }
 
 func isMounted(path string) bool {
